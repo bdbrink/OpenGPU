@@ -1,5 +1,6 @@
 use std::process::Command;
 use std::fs;
+use crate::detect::GpuInfo;
 
 #[derive(Debug, Clone)]
 pub enum ReadinessLevel {
@@ -39,20 +40,11 @@ pub struct SystemSpecs {
     pub total_ram_gb: f64,
     pub available_ram_gb: f64,
     pub disk_space_gb: f64,
-    pub gpu_info: GpuCapability,
+    pub gpu_info: GpuInfo,
     pub python_version: Option<String>,
     pub rust_version: Option<String>,
     pub cuda_version: Option<String>,
     pub rocm_version: Option<String>,
-}
-
-#[derive(Debug)]
-pub struct GpuCapability {
-    pub gpu_type: String,
-    pub vram_gb: f64,
-    pub compute_capability: Option<String>,
-    pub driver_version: Option<String>,
-    pub is_ml_ready: bool,
 }
 
 #[derive(Debug)]
@@ -67,13 +59,12 @@ pub struct ModelRecommendation {
 pub struct MLReadinessChecker;
 
 impl MLReadinessChecker {
-    pub fn check_system() -> SystemSpecs {
+    pub fn check_system_with_gpu(gpu_info: GpuInfo) -> SystemSpecs {
         println!("🔍 Analyzing system for ML readiness...\n");
         
         let cpu_info = Self::get_cpu_info();
         let memory_info = Self::get_memory_info();
         let disk_info = Self::get_disk_info();
-        let gpu_info = Self::get_gpu_capability();
         let python_version = Self::get_python_version();
         let rust_version = Self::get_rust_version();
         let cuda_version = Self::get_cuda_version();
@@ -147,7 +138,6 @@ impl MLReadinessChecker {
                 let output_str = String::from_utf8_lossy(&output.stdout);
                 if let Some(line) = output_str.lines().nth(1) {
                     if let Some(available) = line.split_whitespace().nth(3) {
-                        // Parse size (could be in G, T, etc.)
                         let size_str = available.trim_end_matches('G')
                             .trim_end_matches('T')
                             .trim_end_matches('M');
@@ -166,185 +156,6 @@ impl MLReadinessChecker {
             Err(_) => {}
         }
         0.0
-    }
-    
-    fn get_gpu_capability() -> GpuCapability {
-        // Check NVIDIA first
-        if let Some(nvidia_info) = Self::get_nvidia_info() {
-            return nvidia_info;
-        }
-        
-        // Check AMD
-        if let Some(amd_info) = Self::get_amd_info() {
-            return amd_info;
-        }
-        
-        // Check Intel
-        if let Some(intel_info) = Self::get_intel_info() {
-            return intel_info;
-        }
-        
-        // No GPU or integrated only
-        GpuCapability {
-            gpu_type: "CPU Only".to_string(),
-            vram_gb: 0.0,
-            compute_capability: None,
-            driver_version: None,
-            is_ml_ready: false,
-        }
-    }
-    
-    fn get_nvidia_info() -> Option<GpuCapability> {
-        match Command::new("nvidia-smi")
-            .args(&["--query-gpu=name,memory.total,driver_version", "--format=csv,noheader,nounits"])
-            .output()
-        {
-            Ok(output) => {
-                if output.status.success() {
-                    let info = String::from_utf8_lossy(&output.stdout);
-                    if let Some(line) = info.lines().next() {
-                        let parts: Vec<&str> = line.split(',').collect();
-                        if parts.len() >= 3 {
-                            let name = parts[0].trim();
-                            let vram_mb: f64 = parts[1].trim().parse().unwrap_or(0.0);
-                            let driver = parts[2].trim();
-                            
-                            // Get compute capability
-                            let compute_cap = Self::get_nvidia_compute_capability();
-                            
-                            return Some(GpuCapability {
-                                gpu_type: format!("NVIDIA {}", name),
-                                vram_gb: vram_mb / 1024.0,
-                                compute_capability: compute_cap,
-                                driver_version: Some(driver.to_string()),
-                                is_ml_ready: vram_mb > 2048.0, // At least 2GB VRAM
-                            });
-                        }
-                    }
-                }
-            }
-            Err(_) => {}
-        }
-        None
-    }
-    
-    fn get_nvidia_compute_capability() -> Option<String> {
-        match Command::new("nvidia-smi").args(&["--query-gpu=compute_cap", "--format=csv,noheader"]).output() {
-            Ok(output) => {
-                if output.status.success() {
-                    let cap = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if !cap.is_empty() && cap != "[Not Supported]" {
-                        return Some(cap);
-                    }
-                }
-            }
-            Err(_) => {}
-        }
-        None
-    }
-    
-    fn get_amd_info() -> Option<GpuCapability> {
-        match Command::new("rocm-smi").args(&["--showmeminfo", "vram"]).output() {
-            Ok(output) => {
-                if output.status.success() {
-                    let info = String::from_utf8_lossy(&output.stdout);
-                    // Parse VRAM info from rocm-smi output
-                    for line in info.lines() {
-                        if line.contains("Total VRAM") {
-                            if let Some(vram_str) = line.split_whitespace().last() {
-                                let vram_mb: f64 = vram_str.trim_end_matches("MB").parse().unwrap_or(0.0);
-                                
-                                let arch = Self::get_amd_architecture();
-                                
-                                return Some(GpuCapability {
-                                    gpu_type: format!("AMD GPU ({})", arch.clone().unwrap_or("Unknown".to_string())),
-                                    vram_gb: vram_mb / 1024.0,
-                                    compute_capability: arch,
-                                    driver_version: Self::get_amdgpu_version(),
-                                    is_ml_ready: vram_mb > 4096.0, // AMD needs more VRAM typically
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            Err(_) => {}
-        }
-        
-        // Fallback: check if AMD GPU exists via lspci
-        if let Ok(output) = Command::new("lspci").output() {
-            let info = String::from_utf8_lossy(&output.stdout);
-            for line in info.lines() {
-                if (line.contains("AMD") || line.contains("ATI")) && line.contains("VGA") {
-                    return Some(GpuCapability {
-                        gpu_type: "AMD GPU (ROCm not configured)".to_string(),
-                        vram_gb: 0.0,
-                        compute_capability: None,
-                        driver_version: None,
-                        is_ml_ready: false,
-                    });
-                }
-            }
-        }
-        
-        None
-    }
-    
-    fn get_amd_architecture() -> Option<String> {
-        match Command::new("rocminfo").output() {
-            Ok(output) => {
-                let info = String::from_utf8_lossy(&output.stdout);
-                for line in info.lines() {
-                    if line.contains("gfx") {
-                        return Some(line.trim().to_string());
-                    }
-                }
-            }
-            Err(_) => {}
-        }
-        None
-    }
-    
-    fn get_amdgpu_version() -> Option<String> {
-        match Command::new("modinfo").arg("amdgpu").output() {
-            Ok(output) => {
-                let info = String::from_utf8_lossy(&output.stdout);
-                for line in info.lines() {
-                    if line.starts_with("version:") {
-                        return Some(line.split(':').nth(1).unwrap_or("Unknown").trim().to_string());
-                    }
-                }
-            }
-            Err(_) => {}
-        }
-        None
-    }
-    
-    fn get_intel_info() -> Option<GpuCapability> {
-        match Command::new("clinfo").output() {
-            Ok(output) => {
-                if output.status.success() {
-                    let info = String::from_utf8_lossy(&output.stdout);
-                    if info.contains("Intel") {
-                        for line in info.lines() {
-                            if line.contains("Device Name") && line.contains("Intel") {
-                                let device_name = line.split(':').nth(1).unwrap_or("Intel GPU").trim();
-                                
-                                return Some(GpuCapability {
-                                    gpu_type: device_name.to_string(),
-                                    vram_gb: 0.0, // Shared memory
-                                    compute_capability: Some("OpenCL".to_string()),
-                                    driver_version: None,
-                                    is_ml_ready: false, // Limited ML capability
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            Err(_) => {}
-        }
-        None
     }
     
     fn get_python_version() -> Option<String> {
@@ -621,11 +432,11 @@ impl MLReadinessChecker {
     }
 }
 
-pub fn run_ml_readiness_check() {
+pub fn run_ml_readiness_check_with_gpu(gpu_info: GpuInfo) {
     println!("🤖 ML System Readiness Checker");
     println!("==============================\n");
     
-    let specs = MLReadinessChecker::check_system();
+    let specs = MLReadinessChecker::check_system_with_gpu(gpu_info);
     MLReadinessChecker::print_detailed_report(&specs);
     
     println!("\n✨ Analysis complete! Use this info to plan your ML setup.");
