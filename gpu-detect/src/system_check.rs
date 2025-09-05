@@ -1,6 +1,9 @@
 use std::process::Command;
 use std::fs;
 use crate::detect::GpuInfo;
+use serde::{Deserialize, Serialize};
+use reqwest;
+use tokio;
 
 #[derive(Debug, Clone)]
 pub enum ReadinessLevel {
@@ -33,6 +36,17 @@ impl ReadinessLevel {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ModelInfo {
+    pub name: String,
+    pub size_category: String,
+    pub parameters: String,
+    pub min_vram_gb: f64,
+    pub min_ram_gb: f64,
+    pub repo_id: Option<String>,
+    pub description: String,
+}
+
 #[derive(Debug)]
 pub struct SystemSpecs {
     pub cpu_cores: u32,
@@ -50,7 +64,7 @@ pub struct SystemSpecs {
 #[derive(Debug)]
 pub struct ModelRecommendation {
     pub model_size: String,
-    pub examples: Vec<String>,
+    pub models: Vec<ModelInfo>,
     pub ram_required: String,
     pub vram_required: String,
     pub inference_speed: String,
@@ -83,7 +97,251 @@ impl MLReadinessChecker {
             rocm_version,
         }
     }
+
+    // Fetch top models dynamically from multiple sources
+    pub async fn fetch_top_models() -> Vec<ModelInfo> {
+        let mut models = Vec::new();
+        
+        // Add some current top models with known specs (fallback data)
+        let fallback_models = Self::get_fallback_models();
+        
+        // Try to fetch from HuggingFace API or leaderboard
+        match Self::fetch_huggingface_models().await {
+            Ok(mut hf_models) => {
+                models.append(&mut hf_models);
+            }
+            Err(e) => {
+                println!("⚠️ Failed to fetch latest models from HuggingFace: {}", e);
+                println!("📦 Using curated fallback models...");
+            }
+        }
+        
+        // If we couldn't fetch online, use fallback
+        if models.is_empty() {
+            models = fallback_models;
+        } else {
+            // Merge with some fallback models for completeness
+            let mut combined = fallback_models;
+            combined.extend(models);
+            models = combined;
+        }
+        
+        // Sort by parameter count and deduplicate
+        models.sort_by(|a, b| {
+            let a_params = Self::extract_parameter_count(&a.parameters);
+            let b_params = Self::extract_parameter_count(&b.parameters);
+            b_params.partial_cmp(&a_params).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        
+        // Remove duplicates and limit to top models per category
+        Self::deduplicate_and_limit_models(models)
+    }
     
+    async fn fetch_huggingface_models() -> Result<Vec<ModelInfo>, Box<dyn std::error::Error>> {
+        let client = reqwest::Client::new();
+        
+        // Try to get models from HF API - popular text-generation models
+        let url = "https://huggingface.co/api/models?pipeline_tag=text-generation&sort=downloads&direction=-1&limit=50";
+        
+        let response = client
+            .get(url)
+            .header("User-Agent", "ML-Readiness-Checker/1.0")
+            .send()
+            .await?;
+            
+        if !response.status().is_success() {
+            return Err(format!("API request failed: {}", response.status()).into());
+        }
+        
+        let hf_response: serde_json::Value = response.json().await?;
+        let mut models = Vec::new();
+        
+        if let Some(model_array) = hf_response.as_array() {
+            for model_data in model_array.iter().take(20) {
+                if let Some(model_id) = model_data["id"].as_str() {
+                    // Skip if it's not a proper LLM
+                    if model_id.contains("embedding") || model_id.contains("tokenizer") {
+                        continue;
+                    }
+                    
+                    let model_info = Self::infer_model_specs(model_id);
+                    models.push(model_info);
+                }
+            }
+        }
+        
+        Ok(models)
+    }
+    
+    fn get_fallback_models() -> Vec<ModelInfo> {
+        vec![
+            // Large models (70B+)
+            ModelInfo {
+                name: "Llama 3.1 70B".to_string(),
+                size_category: "Large".to_string(),
+                parameters: "70B".to_string(),
+                min_vram_gb: 40.0,
+                min_ram_gb: 64.0,
+                repo_id: Some("meta-llama/Llama-3.1-70B".to_string()),
+                description: "Meta's flagship large model with excellent reasoning".to_string(),
+            },
+            ModelInfo {
+                name: "Qwen2.5 72B".to_string(),
+                size_category: "Large".to_string(),
+                parameters: "72B".to_string(),
+                min_vram_gb: 42.0,
+                min_ram_gb: 64.0,
+                repo_id: Some("Qwen/Qwen2.5-72B".to_string()),
+                description: "Alibaba's advanced multilingual model".to_string(),
+            },
+            ModelInfo {
+                name: "DeepSeek-V3".to_string(),
+                size_category: "Large".to_string(),
+                parameters: "671B (MoE)".to_string(),
+                min_vram_gb: 48.0,
+                min_ram_gb: 80.0,
+                repo_id: Some("deepseek-ai/DeepSeek-V3".to_string()),
+                description: "Mixture of Experts model with excellent performance".to_string(),
+            },
+            
+            // Medium models (13-34B)
+            ModelInfo {
+                name: "Llama 3.1 8B".to_string(),
+                size_category: "Medium".to_string(),
+                parameters: "8B".to_string(),
+                min_vram_gb: 6.0,
+                min_ram_gb: 16.0,
+                repo_id: Some("meta-llama/Llama-3.1-8B".to_string()),
+                description: "Balanced model good for most tasks".to_string(),
+            },
+            ModelInfo {
+                name: "Qwen2.5 14B".to_string(),
+                size_category: "Medium".to_string(),
+                parameters: "14B".to_string(),
+                min_vram_gb: 10.0,
+                min_ram_gb: 20.0,
+                repo_id: Some("Qwen/Qwen2.5-14B".to_string()),
+                description: "Strong performance in coding and math".to_string(),
+            },
+            ModelInfo {
+                name: "Mistral 7B v0.3".to_string(),
+                size_category: "Medium".to_string(),
+                parameters: "7B".to_string(),
+                min_vram_gb: 5.0,
+                min_ram_gb: 12.0,
+                repo_id: Some("mistralai/Mistral-7B-v0.3".to_string()),
+                description: "Efficient and capable general-purpose model".to_string(),
+            },
+            
+            // Small models (1-7B)
+            ModelInfo {
+                name: "Phi-3.5 Mini".to_string(),
+                size_category: "Small".to_string(),
+                parameters: "3.8B".to_string(),
+                min_vram_gb: 3.0,
+                min_ram_gb: 8.0,
+                repo_id: Some("microsoft/Phi-3.5-mini-instruct".to_string()),
+                description: "Microsoft's compact but powerful model".to_string(),
+            },
+            ModelInfo {
+                name: "Gemma 2 2B".to_string(),
+                size_category: "Small".to_string(),
+                parameters: "2B".to_string(),
+                min_vram_gb: 2.0,
+                min_ram_gb: 6.0,
+                repo_id: Some("google/gemma-2-2b".to_string()),
+                description: "Google's efficient small model".to_string(),
+            },
+            ModelInfo {
+                name: "SmolLM 1.7B".to_string(),
+                size_category: "Small".to_string(),
+                parameters: "1.7B".to_string(),
+                min_vram_gb: 1.5,
+                min_ram_gb: 4.0,
+                repo_id: Some("HuggingFaceTB/SmolLM-1.7B".to_string()),
+                description: "Compact model for resource-constrained environments".to_string(),
+            },
+        ]
+    }
+    
+    fn infer_model_specs(model_id: &str) -> ModelInfo {
+        let name = model_id.to_string();
+        let (parameters, size_category, min_vram, min_ram) = 
+            if model_id.contains("70B") || model_id.contains("72B") {
+                ("70B+".to_string(), "Large".to_string(), 40.0, 64.0)
+            } else if model_id.contains("34B") || model_id.contains("33B") {
+                ("34B".to_string(), "Medium".to_string(), 20.0, 32.0)
+            } else if model_id.contains("13B") || model_id.contains("14B") {
+                ("13-14B".to_string(), "Medium".to_string(), 10.0, 20.0)
+            } else if model_id.contains("8B") || model_id.contains("7B") {
+                ("7-8B".to_string(), "Medium".to_string(), 6.0, 12.0)
+            } else if model_id.contains("3B") || model_id.contains("2.7B") {
+                ("3B".to_string(), "Small".to_string(), 2.5, 6.0)
+            } else {
+                ("Unknown".to_string(), "Small".to_string(), 2.0, 4.0)
+            };
+            
+        ModelInfo {
+            name: name.clone(),
+            size_category,
+            parameters,
+            min_vram_gb: min_vram,
+            min_ram_gb: min_ram,
+            repo_id: Some(name.clone()),
+            description: format!("Popular model from {}", model_id.split('/').next().unwrap_or("community")),
+        }
+    }
+    
+    fn extract_parameter_count(params: &str) -> f64 {
+        let params_lower = params.to_lowercase();
+        if let Some(pos) = params_lower.find('b') {
+            let number_part = &params_lower[..pos];
+            if let Ok(num) = number_part.parse::<f64>() {
+                return num;
+            }
+        }
+        0.0
+    }
+    
+    fn deduplicate_and_limit_models(models: Vec<ModelInfo>) -> Vec<ModelInfo> {
+        let mut seen_names = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        
+        let mut large_count = 0;
+        let mut medium_count = 0;
+        let mut small_count = 0;
+        
+        for model in models {
+            if seen_names.contains(&model.name) {
+                continue;
+            }
+            
+            let should_include = match model.size_category.as_str() {
+                "Large" => {
+                    large_count += 1;
+                    large_count <= 3
+                }
+                "Medium" => {
+                    medium_count += 1;
+                    medium_count <= 4
+                }
+                "Small" => {
+                    small_count += 1;
+                    small_count <= 4
+                }
+                _ => true,
+            };
+            
+            if should_include {
+                seen_names.insert(model.name.clone());
+                result.push(model);
+            }
+        }
+        
+        result
+    }
+    
+    // Rest of the original methods remain the same...
     fn get_cpu_info() -> (u32, String) {
         let mut cores = 1u32;
         let mut model = "Unknown CPU".to_string();
@@ -258,63 +516,57 @@ impl MLReadinessChecker {
         }
     }
     
-    pub fn get_model_recommendations(specs: &SystemSpecs) -> Vec<ModelRecommendation> {
+    pub async fn get_model_recommendations(specs: &SystemSpecs) -> Vec<ModelRecommendation> {
         let mut recommendations = Vec::new();
+        let models = Self::fetch_top_models().await;
         
-        if specs.gpu_info.vram_gb >= 24.0 && specs.total_ram_gb >= 32.0 {
+        // Group models by capability requirements
+        let large_models: Vec<ModelInfo> = models.iter()
+            .filter(|m| m.min_vram_gb >= 24.0 && specs.gpu_info.vram_gb >= m.min_vram_gb && specs.total_ram_gb >= m.min_ram_gb)
+            .cloned()
+            .take(3)
+            .collect();
+            
+        let medium_models: Vec<ModelInfo> = models.iter()
+            .filter(|m| m.min_vram_gb >= 6.0 && m.min_vram_gb < 24.0 && 
+                    specs.gpu_info.vram_gb >= m.min_vram_gb && specs.total_ram_gb >= m.min_ram_gb)
+            .cloned()
+            .take(4)
+            .collect();
+            
+        let small_models: Vec<ModelInfo> = models.iter()
+            .filter(|m| m.min_vram_gb < 6.0 && 
+                    (specs.gpu_info.vram_gb >= m.min_vram_gb || specs.total_ram_gb >= m.min_ram_gb))
+            .cloned()
+            .take(4)
+            .collect();
+        
+        if !large_models.is_empty() {
             recommendations.push(ModelRecommendation {
                 model_size: "Large (70B+ parameters)".to_string(),
-                examples: vec![
-                    "Llama 2 70B".to_string(),
-                    "Code Llama 70B".to_string(),
-                    "Mixtral 8x7B".to_string(),
-                ],
-                ram_required: "32-64GB".to_string(),
+                models: large_models,
+                ram_required: "64-128GB".to_string(),
                 vram_required: "24-48GB".to_string(),
                 inference_speed: "Fast".to_string(),
             });
         }
         
-        if specs.gpu_info.vram_gb >= 12.0 && specs.total_ram_gb >= 16.0 {
+        if !medium_models.is_empty() {
             recommendations.push(ModelRecommendation {
-                model_size: "Medium (13B-34B parameters)".to_string(),
-                examples: vec![
-                    "Llama 2 13B".to_string(),
-                    "Code Llama 13B".to_string(),
-                    "Vicuna 13B".to_string(),
-                    "WizardCoder 15B".to_string(),
-                ],
-                ram_required: "16-32GB".to_string(),
-                vram_required: "12-20GB".to_string(),
+                model_size: "Medium (7B-34B parameters)".to_string(),
+                models: medium_models,
+                ram_required: "12-32GB".to_string(),
+                vram_required: "6-20GB".to_string(),
                 inference_speed: "Good".to_string(),
             });
         }
         
-        if specs.gpu_info.vram_gb >= 6.0 || specs.total_ram_gb >= 16.0 {
+        if !small_models.is_empty() {
             recommendations.push(ModelRecommendation {
-                model_size: "Small (7B parameters)".to_string(),
-                examples: vec![
-                    "Llama 2 7B".to_string(),
-                    "Code Llama 7B".to_string(),
-                    "Mistral 7B".to_string(),
-                    "Phi-2 (2.7B)".to_string(),
-                ],
-                ram_required: "8-16GB".to_string(),
-                vram_required: "6-12GB".to_string(),
-                inference_speed: "Moderate".to_string(),
-            });
-        }
-        
-        if specs.total_ram_gb >= 8.0 {
-            recommendations.push(ModelRecommendation {
-                model_size: "Tiny (1B-3B parameters)".to_string(),
-                examples: vec![
-                    "TinyLlama 1B".to_string(),
-                    "Phi-1.5 (1.3B)".to_string(),
-                    "DistilBERT".to_string(),
-                ],
-                ram_required: "4-8GB".to_string(),
-                vram_required: "2-4GB (or CPU)".to_string(),
+                model_size: "Small (1B-7B parameters)".to_string(),
+                models: small_models,
+                ram_required: "4-16GB".to_string(),
+                vram_required: "2-6GB (or CPU)".to_string(),
                 inference_speed: "Fast on CPU".to_string(),
             });
         }
@@ -322,7 +574,7 @@ impl MLReadinessChecker {
         recommendations
     }
     
-    pub fn print_detailed_report(specs: &SystemSpecs) {
+    pub async fn print_detailed_report(specs: &SystemSpecs) {
         println!("🖥️  SYSTEM SPECIFICATIONS");
         println!("========================");
         
@@ -372,18 +624,28 @@ impl MLReadinessChecker {
         println!("==========================");
         println!("{} {}", readiness.emoji(), readiness.description());
         
-        // Model recommendations
-        let recommendations = Self::get_model_recommendations(specs);
+        // Dynamic model recommendations
+        println!("\n🔄 Fetching latest model recommendations...");
+        let recommendations = Self::get_model_recommendations(specs).await;
         if !recommendations.is_empty() {
-            println!("\n🤖 RECOMMENDED MODELS");
-            println!("====================");
+            println!("\n🤖 RECOMMENDED MODELS (Updated {})", 
+                chrono::Utc::now().format("%Y-%m-%d"));
+            println!("=======================================");
             for rec in recommendations {
                 println!("\n📦 {}", rec.model_size);
-                println!("   Examples: {}", rec.examples.join(", "));
-                println!("   RAM needed: {}", rec.ram_required);
-                println!("   VRAM needed: {}", rec.vram_required);
-                println!("   Speed: {}", rec.inference_speed);
+                println!("   RAM needed: {} | VRAM needed: {} | Speed: {}", 
+                         rec.ram_required, rec.vram_required, rec.inference_speed);
+                println!("   💎 Top Models:");
+                for (i, model) in rec.models.iter().enumerate() {
+                    println!("   {}. {} ({})", i + 1, model.name, model.parameters);
+                    if let Some(ref repo) = model.repo_id {
+                        println!("      🔗 {}", repo);
+                    }
+                    println!("      📝 {}", model.description);
+                }
             }
+        } else {
+            println!("\n⚠️ No suitable models found for your current hardware configuration");
         }
         
         // Improvement suggestions
@@ -408,7 +670,7 @@ impl MLReadinessChecker {
         }
         
         if specs.disk_space_gb < 100.0 {
-            println!("🔧 More disk space recommended - ML models can be 5-100GB each");
+            println!("🔧 More disk space recommended - modern ML models can be 5-100GB each");
         }
         
         if specs.python_version.is_none() {
@@ -429,15 +691,16 @@ impl MLReadinessChecker {
         println!("2. Set up ML frameworks (PyTorch/Candle for Rust)");
         println!("3. Download and test a small model first");
         println!("4. Monitor resource usage during inference");
+        println!("5. Check HuggingFace for the latest model releases");
     }
 }
 
-pub fn run_ml_readiness_check_with_gpu(gpu_info: GpuInfo) {
-    println!("🤖 ML System Readiness Checker");
-    println!("==============================\n");
+pub async fn run_ml_readiness_check_with_gpu(gpu_info: GpuInfo) {
+    println!("🤖 Dynamic ML System Readiness Checker");
+    println!("======================================\n");
     
     let specs = MLReadinessChecker::check_system_with_gpu(gpu_info);
-    MLReadinessChecker::print_detailed_report(&specs);
+    MLReadinessChecker::print_detailed_report(&specs).await;
     
-    println!("\n✨ Analysis complete! Use this info to plan your ML setup.");
+    println!("\n✨ Analysis complete! Model recommendations updated from latest sources.");
 }
