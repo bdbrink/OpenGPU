@@ -3,7 +3,6 @@ use std::fs;
 use crate::detect::GpuInfo;
 use serde::{Deserialize, Serialize};
 use reqwest;
-use tokio;
 
 #[derive(Debug, Clone)]
 pub enum ReadinessLevel {
