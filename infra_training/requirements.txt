@@ -1,0 +1,34 @@
+# Core ML and AI libraries
+torch>=2.0.0
+transformers>=4.35.0
+tokenizers>=0.14.0
+
+# System monitoring and process management
+psutil>=5.9.0
+
+# Standard library extensions (for type hints)
+typing-extensions>=4.5.0
+
+# Optional GPU acceleration libraries
+# Uncomment based on your GPU setup:
+
+# For NVIDIA GPUs (CUDA):
+# torch-audio  # if you need audio processing
+# torchaudio>=2.0.0
+
+# For AMD GPUs (ROCm) - install manually:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm5.7
+
+# Development and testing (optional)
+# pytest>=7.0.0
+# black>=23.0.0
+# flake8>=6.0.0
+
+# Additional ML utilities (optional)
+# numpy>=1.24.0
+# matplotlib>=3.7.0
+# seaborn>=0.12.0
+
+# Jupyter notebook support (optional)
+# jupyter>=1.0.0
+# ipython>=8.0.0
