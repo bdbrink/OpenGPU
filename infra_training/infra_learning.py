@@ -59,13 +59,27 @@ class GPUManager:
             
             # Run the Rust GPU detection
             result = subprocess.run(
-                [self.rust_binary_path, "--json"],  # Assume we modify Rust to output JSON
+                [self.rust_binary_path, "--json"],
                 capture_output=True,
                 text=True,
                 timeout=30,
                 check=True
             )
             
+            # Debug output
+            print(f"Debug - stdout: {repr(result.stdout)}")
+            print(f"Debug - stderr: {repr(result.stderr)}")
+            
+            if result.stdout.strip():
+                try:
+                    self.gpu_info = json.loads(result.stdout.strip())  # Add .strip()
+                    print(f"✅ GPU Detection successful via Rust")
+                    self._print_gpu_summary()
+                except json.JSONDecodeError as e:
+                    print(f"⚠️ JSON decode error: {e}")
+                    print(f"Raw output: {repr(result.stdout)}")
+                    self._fallback_to_pytorch_detection()
+                
             # Parse JSON output from Rust
             if result.stdout.strip():
                 try:
