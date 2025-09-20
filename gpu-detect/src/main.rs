@@ -18,7 +18,6 @@ fn main() {
     let gpu_info = detect::GpuDetector::detect();
     
     if output_json {
-        // Output JSON for Python integration
         let json_output = json!({
             "gpu_type": gpu_info.gpu_type,
             "vram_gb": gpu_info.vram_gb,
@@ -32,19 +31,19 @@ fn main() {
         println!("{}", json_output);
     } else {
         // Regular human-readable output
-        println!("GPU Detection Results:");
-        println!("=====================");
-        println!("GPU: {}", gpu_info.gpu_type);
+        info!("GPU Detection Results:");
+        info!("=====================");
+        info!("GPU: {}", gpu_info.gpu_type);
         if gpu_info.vram_gb > 0.0 {
-            println!("VRAM: {:.1}GB", gpu_info.vram_gb);
+            info!("VRAM: {:.1}GB", gpu_info.vram_gb);
         }
         if let Some(ref compute) = gpu_info.compute_capability {
-            println!("Compute: {}", compute);
+            info!("Compute: {}", compute);
         }
         if let Some(ref driver) = gpu_info.driver_version {
-            println!("Driver: {}", driver);
+            info!("Driver: {}", driver);
         }
-        println!("ML Ready: {}", if gpu_info.is_ml_ready { "Yes" } else { "No" });
+        info!("ML Ready: {}", if gpu_info.is_ml_ready { "Yes" } else { "No" });
         
         // Run full readiness check if not in JSON mode
         if let Ok(rt) = tokio::runtime::Runtime::new() {
