@@ -21,14 +21,7 @@ class GPUManager:
         # Try to auto-detect the Rust binary location based on your project structure
         if rust_binary_path is None:
             possible_paths = [
-                "../gpu-detect/target/release/gpu-detect",  # From infra_training to gpu-detect (correct name)
-                "./target/release/gpu-detect",              # If running from gpu-detect dir
-                "../target/release/gpu-detect",             # One level up
-                "../../gpu-detect/target/release/gpu-detect", # Two levels up
-                "/home/brendan/code/OpenGPU/gpu-detect/target/release/gpu-detect",  # Absolute path
-                # Fallback with underscore in case it exists
-                "../gpu-detect/target/release/gpu_detect",
-                "./target/release/gpu_detect"
+                "../gpu-detect/target/release/gpu-detect"
             ]
             
             for path in possible_paths:

@@ -1,5 +1,6 @@
 // detect.rs - FIXED VERSION with proper VRAM parsing
 use std::process::Command;
+use log::{info, debug};
 
 #[derive(Debug, Clone)]
 pub struct GpuInfo {
@@ -26,51 +27,51 @@ pub struct GpuDetector;
 
 impl GpuDetector {
     pub fn detect() -> GpuInfo {
-        println!("[INFO] Starting GPU detection...");
-        println!("[DEBUG] System info - OS: {}", std::env::consts::OS);
+        info!(" Starting GPU detection...");
+        debug!(" System info - OS: {}", std::env::consts::OS);
         
         if let Some(nvidia_info) = Self::detect_nvidia() {
-            println!("[INFO] NVIDIA GPU detected");
+            info!(" NVIDIA GPU detected");
             return nvidia_info;
         }
         
         if let Some(amd_info) = Self::detect_amd() {
-            println!("[INFO] AMD GPU detected");
+            info!(" AMD GPU detected");
             return amd_info;
         }
         
         if let Some(intel_info) = Self::detect_intel() {
-            println!("[INFO] Intel GPU detected");
+            info!(" Intel GPU detected");
             return intel_info;
         }
         
         if let Some(fallback_info) = Self::detect_fallback() {
-            println!("[INFO] GPU detected via fallback method");
+            info!(" GPU detected via fallback method");
             return fallback_info;
         }
         
-        println!("[INFO] No supported GPU detected - using CPU only");
+        info!(" No supported GPU detected - using CPU only");
         GpuInfo::default()
     }
     
     fn detect_nvidia() -> Option<GpuInfo> {
-        println!("[DEBUG] Attempting to detect NVIDIA GPU...");
+        debug!(" Attempting to detect NVIDIA GPU...");
         
         match Command::new("nvidia-smi")
             .args(&["--query-gpu=name,driver_version,memory.total", "--format=csv,noheader,nounits"])
             .output()
         {
             Ok(output) => {
-                println!("[DEBUG] nvidia-smi command executed successfully");
-                println!("[DEBUG] Exit status: {}", output.status);
+                debug!(" nvidia-smi command executed successfully");
+                debug!(" Exit status: {}", output.status);
                 
                 if !output.stderr.is_empty() {
-                    println!("[DEBUG] Stderr: {}", String::from_utf8_lossy(&output.stderr));
+                    debug!(" Stderr: {}", String::from_utf8_lossy(&output.stderr));
                 }
                 
                 if output.status.success() && !output.stdout.is_empty() {
                     let info = String::from_utf8_lossy(&output.stdout);
-                    println!("[DEBUG] NVIDIA output: '{}'", info.trim());
+                    debug!(" NVIDIA output: '{}'", info.trim());
                     
                     if let Some(line) = info.lines().next() {
                         let parts: Vec<&str> = line.split(',').collect();
@@ -91,11 +92,11 @@ impl GpuDetector {
                         }
                     }
                 } else {
-                    println!("[DEBUG] nvidia-smi failed or returned empty output");
+                    debug!(" nvidia-smi failed or returned empty output");
                 }
             }
             Err(e) => {
-                println!("[DEBUG] Failed to execute nvidia-smi: {} ({})", e, e.kind());
+                debug!(" Failed to execute nvidia-smi: {} ({})", e, e.kind());
             }
         }
         None
@@ -120,7 +121,7 @@ impl GpuDetector {
     }
     
     fn detect_amd() -> Option<GpuInfo> {
-        println!("[DEBUG] Attempting to detect AMD GPU...");
+        debug!(" Attempting to detect AMD GPU...");
         
         // Try multiple methods to get AMD info
         let vram_gb = Self::get_amd_vram();
@@ -144,7 +145,7 @@ impl GpuDetector {
                 Self::infer_amd_vram_from_name(&final_gpu_name)
             };
             
-            println!("[DEBUG] AMD GPU detected: {} with {:.1}GB VRAM", final_gpu_name, final_vram);
+            debug!(" AMD GPU detected: {} with {:.1}GB VRAM", final_gpu_name, final_vram);
             
             return Some(GpuInfo {
                 gpu_type: final_gpu_name,
@@ -161,7 +162,7 @@ impl GpuDetector {
             for line in info.lines() {
                 if (line.contains("AMD") || line.contains("ATI")) && 
                    (line.contains("VGA") || line.contains("Display")) {
-                    println!("[DEBUG] Found AMD GPU via lspci: {}", line);
+                    debug!(" Found AMD GPU via lspci: {}", line);
                     
                     let vram = Self::infer_amd_vram_from_lspci(line);
                     return Some(GpuInfo {
@@ -179,18 +180,18 @@ impl GpuDetector {
     }
     
     fn get_amd_vram() -> f64 {
-        println!("[DEBUG] Trying to detect AMD VRAM...");
+        debug!(" Trying to detect AMD VRAM...");
         
         // Method 1: Try rocm-smi for VRAM info
         if let Ok(output) = Command::new("rocm-smi").args(&["--showmeminfo", "vram"]).output() {
             if output.status.success() {
                 let info = String::from_utf8_lossy(&output.stdout);
-                println!("[DEBUG] rocm-smi --showmeminfo vram output:\n{}", info);
+                debug!(" rocm-smi --showmeminfo vram output:\n{}", info);
                 
                 // Look for VRAM size in various formats
                 for line in info.lines() {
                     if let Some(vram) = Self::extract_memory_from_line(line) {
-                        println!("[DEBUG] Found VRAM via rocm-smi: {:.1}GB", vram);
+                        debug!(" Found VRAM via rocm-smi: {:.1}GB", vram);
                         return vram;
                     }
                 }
@@ -201,11 +202,11 @@ impl GpuDetector {
         if let Ok(output) = Command::new("rocm-smi").output() {
             if output.status.success() {
                 let info = String::from_utf8_lossy(&output.stdout);
-                println!("[DEBUG] rocm-smi output:\n{}", info);
+                debug!(" rocm-smi output:\n{}", info);
                 
                 for line in info.lines() {
                     if let Some(vram) = Self::extract_memory_from_line(line) {
-                        println!("[DEBUG] Found VRAM via basic rocm-smi: {:.1}GB", vram);
+                        debug!(" Found VRAM via basic rocm-smi: {:.1}GB", vram);
                         return vram;
                     }
                 }
@@ -216,11 +217,11 @@ impl GpuDetector {
         if let Ok(output) = Command::new("radeontop").args(&["-d", "-", "-l", "1"]).output() {
             if output.status.success() {
                 let info = String::from_utf8_lossy(&output.stdout);
-                println!("[DEBUG] radeontop output:\n{}", info);
+                debug!(" radeontop output:\n{}", info);
                 
                 for line in info.lines() {
                     if let Some(vram) = Self::extract_memory_from_line(line) {
-                        println!("[DEBUG] Found VRAM via radeontop: {:.1}GB", vram);
+                        debug!(" Found VRAM via radeontop: {:.1}GB", vram);
                         return vram;
                     }
                 }
@@ -244,12 +245,12 @@ impl GpuDetector {
                     
                     for vram_path in vram_paths {
                         if let Ok(content) = std::fs::read_to_string(&vram_path) {
-                            println!("[DEBUG] Reading from {:?}: {}", vram_path, content.trim());
+                            debug!(" Reading from {:?}: {}", vram_path, content.trim());
                             
                             if let Ok(bytes) = content.trim().parse::<u64>() {
                                 let gb = bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                                 if gb > 1.0 { // Reasonable VRAM size
-                                    println!("[DEBUG] Found VRAM via sysfs: {:.1}GB", gb);
+                                    debug!(" Found VRAM via sysfs: {:.1}GB", gb);
                                     return gb;
                                 }
                             }
@@ -263,18 +264,18 @@ impl GpuDetector {
         if let Ok(output) = Command::new("glxinfo").args(&["-B"]).output() {
             if output.status.success() {
                 let info = String::from_utf8_lossy(&output.stdout);
-                println!("[DEBUG] glxinfo output available, checking for memory info...");
+                debug!(" glxinfo output available, checking for memory info...");
                 
                 for line in info.lines() {
                     if let Some(vram) = Self::extract_memory_from_line(line) {
-                        println!("[DEBUG] Found VRAM via glxinfo: {:.1}GB", vram);
+                        debug!(" Found VRAM via glxinfo: {:.1}GB", vram);
                         return vram;
                     }
                 }
             }
         }
         
-        println!("[DEBUG] Could not detect AMD VRAM through any method");
+        debug!(" Could not detect AMD VRAM through any method");
         0.0
     }
 
@@ -345,7 +346,7 @@ impl GpuDetector {
                     
                     // Sanity check - VRAM should be between 1GB and 128GB
                     if gb_value >= 1.0 && gb_value <= 128.0 {
-                        println!("[DEBUG] Extracted {:.1}GB from: '{}'", gb_value, line.trim());
+                        debug!(" Extracted {:.1}GB from: '{}'", gb_value, line.trim());
                         return Some(gb_value);
                     }
                 }
@@ -387,7 +388,7 @@ impl GpuDetector {
                         };
                         
                         if gb_value >= 1.0 && gb_value <= 128.0 {
-                            println!("[DEBUG] Extracted {:.1}GB from colon-separated: '{}'", gb_value, line.trim());
+                            debug!(" Extracted {:.1}GB from colon-separated: '{}'", gb_value, line.trim());
                             return Some(gb_value);
                         }
                     }
@@ -402,7 +403,7 @@ impl GpuDetector {
         if let Ok(output) = Command::new("rocminfo").output() {
             if output.status.success() {
                 let info = String::from_utf8_lossy(&output.stdout);
-                println!("[DEBUG] rocminfo available, parsing GPU info...");
+                debug!(" rocminfo available, parsing GPU info...");
                 
                 let mut marketing_name = None;
                 let mut gfx_arch = None;
@@ -415,7 +416,7 @@ impl GpuDetector {
                     if line.starts_with("Marketing Name:") {
                         if let Some(name) = line.split(':').nth(1) {
                             marketing_name = Some(name.trim().to_string());
-                            println!("[DEBUG] Found marketing name: {:?}", marketing_name);
+                            debug!(" Found marketing name: {:?}", marketing_name);
                         }
                     }
                     
@@ -423,7 +424,7 @@ impl GpuDetector {
                     if line.starts_with("Name:") && line.contains("gfx") {
                         if let Some(arch) = line.split(':').nth(1) {
                             gfx_arch = Some(arch.trim().to_string());
-                            println!("[DEBUG] Found gfx architecture: {:?}", gfx_arch);
+                            debug!(" Found gfx architecture: {:?}", gfx_arch);
                         }
                     }
                 }
@@ -492,13 +493,13 @@ impl GpuDetector {
     }
     
     fn detect_intel() -> Option<GpuInfo> {
-        println!("[DEBUG] Attempting to detect Intel GPU...");
+        debug!(" Attempting to detect Intel GPU...");
         
         match Command::new("clinfo").output() {
             Ok(output) => {
                 if output.status.success() {
                     let info = String::from_utf8_lossy(&output.stdout);
-                    println!("[DEBUG] clinfo available, searching for Intel devices...");
+                    debug!(" clinfo available, searching for Intel devices...");
                     
                     if info.to_lowercase().contains("intel") {
                         // Look for device name
@@ -509,7 +510,7 @@ impl GpuDetector {
                                     .unwrap_or("Intel GPU")
                                     .trim();
                                 
-                                println!("[DEBUG] Found Intel device: {}", device_name);
+                                debug!(" Found Intel device: {}", device_name);
                                 
                                 return Some(GpuInfo {
                                     gpu_type: device_name.to_string(),
@@ -533,21 +534,21 @@ impl GpuDetector {
                 }
             }
             Err(e) => {
-                println!("[DEBUG] clinfo failed: {}", e);
+                debug!(" clinfo failed: {}", e);
             }
         }
         None
     }
     
     fn detect_fallback() -> Option<GpuInfo> {
-        println!("[DEBUG] Attempting fallback detection methods...");
+        debug!(" Attempting fallback detection methods...");
         
         // Try lspci for PCI devices
         match Command::new("lspci").arg("-v").output() {
             Ok(output) => {
                 if output.status.success() {
                     let info = String::from_utf8_lossy(&output.stdout);
-                    println!("[DEBUG] lspci available, searching for GPU info...");
+                    debug!(" lspci available, searching for GPU info...");
                     
                     for line in info.lines() {
                         let line_lower = line.to_lowercase();
@@ -559,7 +560,7 @@ impl GpuDetector {
                             line_lower.contains("ati") ||
                             line_lower.contains("intel")) {
                             
-                            println!("[DEBUG] Found GPU via lspci: {}", line);
+                            debug!(" Found GPU via lspci: {}", line);
                             
                             let vram = if line_lower.contains("amd") || line_lower.contains("ati") {
                                 Self::infer_amd_vram_from_lspci(line)
@@ -579,13 +580,13 @@ impl GpuDetector {
                 }
             }
             Err(e) => {
-                println!("[DEBUG] lspci not available: {}", e);
+                debug!(" lspci not available: {}", e);
             }
         }
         
         // Try checking /proc/driver/nvidia/version for NVIDIA
         if let Ok(content) = std::fs::read_to_string("/proc/driver/nvidia/version") {
-            println!("[DEBUG] Found NVIDIA driver info in /proc");
+            debug!(" Found NVIDIA driver info in /proc");
             return Some(GpuInfo {
                 gpu_type: "NVIDIA GPU (driver detected)".to_string(),
                 vram_gb: 0.0,
