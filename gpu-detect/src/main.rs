@@ -1,5 +1,7 @@
 use std::env;
 use serde_json::json;
+use log::{info, debug};
+
 
 mod detect;
 mod system_check;
@@ -7,6 +9,10 @@ mod system_check;
 fn main() {
     let args: Vec<String> = env::args().collect();
     let output_json = args.contains(&"--json".to_string());
+
+    if !output_json {
+        env_logger::init();
+    }
     
     // Run GPU detection
     let gpu_info = detect::GpuDetector::detect();
