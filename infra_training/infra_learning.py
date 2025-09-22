@@ -43,7 +43,6 @@ class GPUManager:
         print("🔍 Running Rust GPU Detection...")
         
         try:
-            # Check if Rust binary exists
             if not Path(self.rust_binary_path).exists():
                 print(f"❌ Rust binary not found at {self.rust_binary_path}")
                 print("💡 Run 'cargo build --release' to build the GPU detection tool")
@@ -59,28 +58,42 @@ class GPUManager:
                 check=True
             )
             
-            # Debug output
-            print(f"Debug - stdout: {repr(result.stdout)}")
-            print(f"Debug - stderr: {repr(result.stderr)}")
-            
             if result.stdout.strip():
                 try:
-                    self.gpu_info = json.loads(result.stdout.strip())  # Add .strip()
-                    print(f"✅ GPU Detection successful via Rust")
-                    self._print_gpu_summary()
-                except json.JSONDecodeError as e:
-                    print(f"⚠️ JSON decode error: {e}")
-                    print(f"Raw output: {repr(result.stdout)}")
-                    self._fallback_to_pytorch_detection()
-                
-            # Parse JSON output from Rust
-            if result.stdout.strip():
-                try:
-                    self.gpu_info = json.loads(result.stdout)
-                    print(f"✅ GPU Detection successful via Rust")
-                    self._print_gpu_summary()
-                except json.JSONDecodeError:
-                    print("⚠️ Could not parse Rust output as JSON, using fallback")
+                    # Look for JSON in the mixed output
+                    # The JSON should be a complete line that starts with { and ends with }
+                    lines = result.stdout.strip().split('\n')
+                    json_found = False
+                    
+                    for line in lines:
+                        line = line.strip()
+                        # Check if this line looks like JSON
+                        if line.startswith('{') and line.endswith('}') and '"gpu_type"' in line:
+                            try:
+                                self.gpu_info = json.loads(line)
+                                print(f"✅ GPU Detection successful via Rust")
+                                
+                                # Quick fix: if we got "AMD Radeon Graphics" but there's a better name in debug logs
+                                if "Radeon Graphics" in self.gpu_info.get('gpu_type', '') and "7800" not in self.gpu_info.get('gpu_type', ''):
+                                    # Look for RX 7800 XT in the debug output
+                                    full_output = result.stdout + result.stderr
+                                    if "RX 7800 XT" in full_output or "Radeon RX 7800 XT" in full_output:
+                                        print("🔧 Detected RX 7800 XT in debug output, using correct name")
+                                        self.gpu_info['gpu_type'] = "AMD Radeon RX 7800 XT"
+                                
+                                self._print_gpu_summary()
+                                json_found = True
+                                break
+                            except json.JSONDecodeError:
+                                continue  # Try next line
+                    
+                    if not json_found:
+                        print("⚠️ No valid JSON found in output, using fallback")
+                        print(f"Output preview: {result.stdout[:200]}...")
+                        self._fallback_to_pytorch_detection()
+                        
+                except Exception as e:
+                    print(f"⚠️ Error parsing Rust output: {e}")
                     self._fallback_to_pytorch_detection()
             else:
                 print("⚠️ No output from Rust detection, using fallback")
@@ -90,12 +103,16 @@ class GPUManager:
             print("⚠️ Rust GPU detection timed out, using fallback")
             self._fallback_to_pytorch_detection()
         except subprocess.CalledProcessError as e:
-            print(f"⚠️ Rust GPU detection failed: {e}")
+            print(f"⚠️ Rust GPU detection failed with exit code {e.returncode}")
+            if e.stdout:
+                print(f"Stdout: {e.stdout[:200]}...")
+            if e.stderr:
+                print(f"Stderr: {e.stderr[:200]}...")
             self._fallback_to_pytorch_detection()
         except FileNotFoundError:
             print(f"⚠️ Rust binary not found at {self.rust_binary_path}")
             self._fallback_to_pytorch_detection()
-    
+        
     def _fallback_to_pytorch_detection(self) -> None:
         """Fallback to PyTorch's built-in GPU detection"""
         print("🔄 Using PyTorch GPU detection as fallback...")
