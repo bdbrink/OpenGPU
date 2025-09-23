@@ -1,6 +1,6 @@
 use std::env;
 use serde_json::json;
-use log::{info, debug};
+use log::info;
 
 
 mod detect;
