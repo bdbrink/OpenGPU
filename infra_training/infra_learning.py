@@ -11,6 +11,7 @@ import os
 import subprocess
 import json
 import sys
+import pickle
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -383,11 +384,71 @@ def enhanced_memory_monitoring(gpu_manager: GPUManager):
     else:
         print("No ML-capable GPU detected")
 
-def main():
-    """Enhanced main execution flow with Rust GPU integration"""
-    print("🎯 Enhanced SRE AI Training - Rust GPU Integration")
+def save_model_info(tokenizer, model, device, gpu_manager, output_file="./model_info.pkl"):
+    """Save model information for the RAG/Fine-tuning pipeline"""
+    print(f"\n💾 Saving model info for RAG/Fine-tuning pipeline...")
+    
+    model_info = {
+        'model': model,
+        'tokenizer': tokenizer,
+        'device': device,
+        'gpu_info': gpu_manager.gpu_info,
+        'batch_size': gpu_manager.get_optimal_batch_size("training"),
+        'use_mixed_precision': gpu_manager.should_use_mixed_precision()
+    }
+    
+    try:
+        with open(output_file, 'wb') as f:
+            pickle.dump(model_info, f)
+        print(f"✅ Model info saved to {output_file}")
+        return output_file
+    except Exception as e:
+        print(f"❌ Failed to save model info: {e}")
+        return None
+
+def launch_rag_pipeline(model_info_file, mode="both", test=True):
+    """Launch the RAG/Fine-tuning pipeline with saved model info"""
+    print(f"\n🚀 Launching RAG/Fine-tuning pipeline...")
+    
+    # Check if the RAG script exists
+    rag_script = "sre_rag_finetuning.py"  # Assume you saved the RAG script as this
+    
+    if not Path(rag_script).exists():
+        print(f"❌ RAG script not found: {rag_script}")
+        print("💡 Save the RAG script as 'sre_rag_finetuning.py' in the same directory")
+        return False
+    
+    # Build command
+    cmd = [
+        sys.executable, rag_script,
+        "--mode", mode,
+        "--model-info", model_info_file,
+        "--output-dir", "./sre_outputs"
+    ]
+    
+    if test:
+        cmd.append("--test")
+    
+    try:
+        print(f"🔧 Running: {' '.join(cmd)}")
+        result = subprocess.run(cmd, check=True)
+        print("✅ RAG/Fine-tuning pipeline completed successfully!")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Pipeline failed: {e}")
+        return False
+    except FileNotFoundError:
+        print(f"❌ Python interpreter not found: {sys.executable}")
+        return False
+
+def enhanced_main_with_pipeline():
+    """
+    Enhanced version of  main() function with RAG/Fine-tuning integration
+    """
+    print("🎯 Enhanced SRE AI Training - Full Pipeline")
     print("=" * 70)
     
+    #  existing code here...
     # Initialize GPU manager (this runs Rust detection)
     gpu_manager = GPUManager()
     
@@ -398,19 +459,82 @@ def main():
     tokenizer, model, device = load_model_with_gpu_config(gpu_manager)
     
     if tokenizer and model:
-        # Run optimized inference test
+        #  existing inference test
         optimized_inference_test(tokenizer, model, device, gpu_manager)
-        
-        # Enhanced memory monitoring
         enhanced_memory_monitoring(gpu_manager)
         
-        print(f"\n🎉 Enhanced bootstrap complete!")
-        print(f"💡 Rust GPU detection provided: {gpu_manager.gpu_info['gpu_type']}")
-        print(f"📊 Optimal batch size for training: {gpu_manager.get_optimal_batch_size()}")
-        print(f"🚀 Ready for k8s data integration with optimized GPU settings!")
+        print(f"\n🎉 Basic setup complete!")
+        print(f"💡 Rust GPU detection: {gpu_manager.gpu_info['gpu_type']}")
+        
+        # NEW: Save model info and launch RAG pipeline
+        model_info_file = save_model_info(tokenizer, model, device, gpu_manager)
+        
+        if model_info_file:
+            print(f"\n🤖 Ready to launch RAG/Fine-tuning pipeline!")
+            
+            # Ask user what they want to do
+            print("\nChoose your next step:")
+            print("1. RAG system only")
+            print("2. Fine-tuning only") 
+            print("3. Both RAG and fine-tuning")
+            print("4. Skip pipeline")
+            
+            try:
+                choice = input("\nEnter choice (1-4): ").strip()
+                
+                mode_map = {
+                    "1": "rag",
+                    "2": "finetune", 
+                    "3": "both",
+                    "4": None
+                }
+                
+                mode = mode_map.get(choice)
+                
+                if mode:
+                    success = launch_rag_pipeline(model_info_file, mode=mode, test=True)
+                    if success:
+                        print(f"\n🎯 Full pipeline completed successfully!")
+                        print(f"📊 Check ./sre_outputs for results")
+                    else:
+                        print(f"\n⚠️ Pipeline had issues, but basic model is ready")
+                else:
+                    print(f"\n✅ Basic setup completed - pipeline skipped")
+                    
+            except KeyboardInterrupt:
+                print(f"\n✅ Basic setup completed - pipeline skipped")
+        
     else:
-        print("❌ Enhanced bootstrap failed. Check your setup and GPU detection.")
-        print("💡 Try running the Rust GPU detection manually: ./target/release/gpu_detect")
+        print("❌ Setup failed. Check your configuration.")
+
+# def main():
+#     """Enhanced main execution flow with Rust GPU integration"""
+#     print("🎯 Enhanced SRE AI Training - Rust GPU Integration")
+#     print("=" * 70)
+    
+#     # Initialize GPU manager (this runs Rust detection)
+#     gpu_manager = GPUManager()
+    
+#     # Enhanced system check
+#     enhanced_system_check(gpu_manager)
+    
+#     # Load model with GPU-optimized config
+#     tokenizer, model, device = load_model_with_gpu_config(gpu_manager)
+    
+#     if tokenizer and model:
+#         # Run optimized inference test
+#         optimized_inference_test(tokenizer, model, device, gpu_manager)
+        
+#         # Enhanced memory monitoring
+#         enhanced_memory_monitoring(gpu_manager)
+        
+#         print(f"\n🎉 Enhanced bootstrap complete!")
+#         print(f"💡 Rust GPU detection provided: {gpu_manager.gpu_info['gpu_type']}")
+#         print(f"📊 Optimal batch size for training: {gpu_manager.get_optimal_batch_size()}")
+#         print(f"🚀 Ready for k8s data integration with optimized GPU settings!")
+#     else:
+#         print("❌ Enhanced bootstrap failed. Check your setup and GPU detection.")
+#         print("💡 Try running the Rust GPU detection manually: ./target/release/gpu_detect")
 
 if __name__ == "__main__":
-    main()
+    enhanced_main_with_pipeline()
