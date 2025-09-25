@@ -441,9 +441,9 @@ def launch_rag_pipeline(model_info_file, mode="both", test=True):
         print(f"❌ Python interpreter not found: {sys.executable}")
         return False
 
-def enhanced_main_with_pipeline():
+def main():
     """
-    Enhanced version of  main() function with RAG/Fine-tuning integration
+    Enhanced function with RAG/Fine-tuning integration
     """
     print("🎯 Enhanced SRE AI Training - Full Pipeline")
     print("=" * 70)
@@ -507,34 +507,5 @@ def enhanced_main_with_pipeline():
     else:
         print("❌ Setup failed. Check your configuration.")
 
-# def main():
-#     """Enhanced main execution flow with Rust GPU integration"""
-#     print("🎯 Enhanced SRE AI Training - Rust GPU Integration")
-#     print("=" * 70)
-    
-#     # Initialize GPU manager (this runs Rust detection)
-#     gpu_manager = GPUManager()
-    
-#     # Enhanced system check
-#     enhanced_system_check(gpu_manager)
-    
-#     # Load model with GPU-optimized config
-#     tokenizer, model, device = load_model_with_gpu_config(gpu_manager)
-    
-#     if tokenizer and model:
-#         # Run optimized inference test
-#         optimized_inference_test(tokenizer, model, device, gpu_manager)
-        
-#         # Enhanced memory monitoring
-#         enhanced_memory_monitoring(gpu_manager)
-        
-#         print(f"\n🎉 Enhanced bootstrap complete!")
-#         print(f"💡 Rust GPU detection provided: {gpu_manager.gpu_info['gpu_type']}")
-#         print(f"📊 Optimal batch size for training: {gpu_manager.get_optimal_batch_size()}")
-#         print(f"🚀 Ready for k8s data integration with optimized GPU settings!")
-#     else:
-#         print("❌ Enhanced bootstrap failed. Check your setup and GPU detection.")
-#         print("💡 Try running the Rust GPU detection manually: ./target/release/gpu_detect")
-
 if __name__ == "__main__":
-    enhanced_main_with_pipeline()
+    main()
