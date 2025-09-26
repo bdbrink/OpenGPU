@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 SRE AI Training Script - Enhanced with Rust GPU Detection Integration
+FIXED: AMD GPU compatibility and method signature issues
 """
 
 import torch
@@ -135,12 +136,25 @@ class GPUManager:
             return 16  # Conservative for CPU or limited GPU
         
         vram_gb = self.gpu_info.get('vram_gb', 0)
+        gpu_type = self.gpu_info.get('gpu_type', '').lower()
         
-        # Heuristic based on VRAM (leaving room for model weights)
+        # More conservative batch sizes for AMD GPU to avoid HIP errors
+        if 'amd' in gpu_type or 'radeon' in gpu_type:
+            # AMD GPUs need smaller batch sizes due to ROCm limitations
+            if vram_gb >= 16:
+                return 32  # Conservative for your 7800 XT
+            elif vram_gb >= 12:
+                return 24
+            elif vram_gb >= 8:
+                return 16
+            else:
+                return 8
+        
+        # Original logic for NVIDIA
         if vram_gb >= 24:
             return 128  # Large batch for high-end cards
         elif vram_gb >= 16:
-            return 64   # Your 7800 XT falls here
+            return 64
         elif vram_gb >= 12:
             return 48
         elif vram_gb >= 8:
@@ -157,11 +171,13 @@ class GPUManager:
         
         gpu_type = self.gpu_info.get('gpu_type', '').lower()
         
-        # Enable for modern GPUs that support it well
-        modern_nvidia = any(x in gpu_type for x in ['rtx', 'gtx 16', 'tesla', 'quadro rtx'])
-        modern_amd = any(x in gpu_type for x in ['rx 6', 'rx 7', 'radeon pro'])
+        # Be more conservative with AMD GPUs due to ROCm issues
+        if 'amd' in gpu_type or 'radeon' in gpu_type:
+            return False  # Disable mixed precision for AMD to avoid HIP errors
         
-        return modern_nvidia or modern_amd
+        # Enable for modern NVIDIA GPUs
+        modern_nvidia = any(x in gpu_type for x in ['rtx', 'gtx 16', 'tesla', 'quadro rtx'])
+        return modern_nvidia
     
     def get_recommended_model_size(self) -> Tuple[str, str]:
         """Get recommended model size based on capabilities"""
@@ -170,15 +186,27 @@ class GPUManager:
         
         vram_gb = self.gpu_info.get('vram_gb', 0)
         is_ml_ready = self.gpu_info.get('is_ml_ready', False)
+        gpu_type = self.gpu_info.get('gpu_type', '').lower()
         
         if not is_ml_ready:
             return ("small", "Qwen/Qwen2-0.5B-Instruct")
-        elif vram_gb >= 20:
-            return ("large", "Qwen/Qwen2-14B-Instruct")  # Could handle 14B
+        
+        # More conservative model sizing for AMD GPUs
+        if 'amd' in gpu_type or 'radeon' in gpu_type:
+            if vram_gb >= 16:
+                return ("medium", "Qwen/Qwen2-1.5B-Instruct")  # Conservative for AMD
+            elif vram_gb >= 8:
+                return ("small", "Qwen/Qwen2-0.5B-Instruct")
+            else:
+                return ("small", "Qwen/Qwen2-0.5B-Instruct")
+        
+        # Original logic for NVIDIA
+        if vram_gb >= 20:
+            return ("large", "Qwen/Qwen2-14B-Instruct")
         elif vram_gb >= 12:
-            return ("medium", "Qwen/Qwen2-7B-Instruct")   # 7B should fit nicely
+            return ("medium", "Qwen/Qwen2-7B-Instruct")
         elif vram_gb >= 8:
-            return ("medium", "Qwen/Qwen2-1.5B-Instruct") # Conservative for 8GB
+            return ("medium", "Qwen/Qwen2-1.5B-Instruct")
         else:
             return ("small", "Qwen/Qwen2-0.5B-Instruct")
     
@@ -200,18 +228,28 @@ class GPUManager:
                     "torch_dtype": torch.bfloat16 if self.should_use_mixed_precision() else torch.float16,
                     "device_map": "auto"
                 })
-            elif 'amd' in gpu_type:
-                # AMD GPU detected - check if ROCm is available
+            elif ('amd' in gpu_type or 'radeon' in gpu_type):
+                # AMD GPU detected - try to use it but with very conservative settings
                 if torch.cuda.is_available():  # ROCm uses CUDA API
+                    print("🔧 AMD GPU detected - attempting to use with ultra-conservative settings")
                     config.update({
-                        "device": "cuda",  # ROCm uses cuda device string
-                        "torch_dtype": torch.float16,
-                        "device_map": "auto"
+                        "device": "cuda",
+                        "torch_dtype": torch.float32,  # Always float32 for AMD
+                        "device_map": None,  # Never use auto device mapping
+                        "low_cpu_mem_usage": True,
+                        "attn_implementation": None  # Disable attention optimizations
                     })
                 else:
                     print("⚠️ AMD GPU detected but ROCm not available, using CPU")
         
         return config
+    
+    def is_amd_gpu(self) -> bool:
+        """Check if detected GPU is AMD"""
+        if not self.gpu_info:
+            return False
+        gpu_type = self.gpu_info.get('gpu_type', '').lower()
+        return 'amd' in gpu_type or 'radeon' in gpu_type
 
 def enhanced_system_check(gpu_manager: GPUManager):
     """Enhanced system check using Rust GPU detection results"""
@@ -230,6 +268,10 @@ def enhanced_system_check(gpu_manager: GPUManager):
         if gpu_manager.gpu_info.get('compute_capability'):
             print(f"Compute Capability: {gpu_manager.gpu_info['compute_capability']}")
         print(f"ML Ready: {gpu_manager.gpu_info.get('is_ml_ready', False)}")
+        
+        # AMD-specific warnings
+        if gpu_manager.is_amd_gpu():
+            print("⚠️ AMD GPU detected - using conservative settings to avoid HIP errors")
     
     # System specs
     print(f"CPU Cores: {psutil.cpu_count()}")
@@ -245,7 +287,7 @@ def enhanced_system_check(gpu_manager: GPUManager):
     print()
 
 def load_model_with_gpu_config(gpu_manager: GPUManager):
-    """Load model using GPU manager's recommended configuration"""
+    """Load model using GPU manager's recommended configuration with AMD GPU support"""
     print("🤖 Loading Model with Optimized Configuration")
     print("=" * 60)
     
@@ -256,101 +298,260 @@ def load_model_with_gpu_config(gpu_manager: GPUManager):
     print(f"Selected Model: {model_name}")
     print(f"Device Config: {device_config['device']} | {device_config['torch_dtype']}")
     
+    # AMD-specific info
+    if gpu_manager.is_amd_gpu():
+        print("🔧 AMD GPU: Attempting GPU loading with conservative settings")
+        print("💡 If loading fails, we'll try progressively safer approaches")
+    
     start_time = time.time()
     
+    # Try loading with requested config first
     try:
         # Load tokenizer
         print("📝 Loading tokenizer...")
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
         
-        # Load model with optimized config
         print(f"🧠 Loading model on {device_config['device']}...")
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=device_config['torch_dtype'],
-            device_map=device_config['device_map'],
-            trust_remote_code=True,
-            low_cpu_mem_usage=device_config['low_cpu_mem_usage']
-        )
+        
+        # For AMD, try a very conservative approach
+        if gpu_manager.is_amd_gpu() and device_config['device'] == 'cuda':
+            # Load on CPU first, then try to move to GPU
+            print("🔧 AMD GPU: Loading on CPU first, then moving to GPU...")
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.float32,  # Always float32 for AMD
+                device_map=None,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True
+            )
+            
+            # Now try to move to GPU piece by piece
+            try:
+                print("🔧 Moving model to AMD GPU...")
+                model = model.to('cuda')
+                actual_device = 'cuda'
+                print("✅ Successfully moved to AMD GPU!")
+            except Exception as gpu_error:
+                print(f"⚠️ Failed to move to AMD GPU: {gpu_error}")
+                print("🔧 Keeping model on CPU")
+                actual_device = 'cpu'
+        else:
+            # NVIDIA or CPU loading
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=device_config['torch_dtype'],
+                device_map=device_config['device_map'],
+                trust_remote_code=True,
+                low_cpu_mem_usage=device_config['low_cpu_mem_usage']
+            )
+            actual_device = device_config['device']
         
         load_time = time.time() - start_time
         print(f"✅ Model loaded successfully in {load_time:.2f} seconds")
         
-        return tokenizer, model, device_config['device']
+        return tokenizer, model, actual_device
         
     except Exception as e:
-        print(f"❌ Error loading model: {e}")
-        print("💡 Falling back to smaller model...")
+        print(f"❌ Error loading {model_name}: {e}")
         
-        # Fallback to smallest model
-        fallback_model = "Qwen/Qwen2-0.5B-Instruct"
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(fallback_model, trust_remote_code=True)
-            model = AutoModelForCausalLM.from_pretrained(
-                fallback_model,
-                torch_dtype=torch.float32,
-                trust_remote_code=True,
-                low_cpu_mem_usage=True
-            )
-            print(f"✅ Fallback model {fallback_model} loaded successfully")
-            return tokenizer, model, "cpu"
-        except Exception as fallback_error:
-            print(f"❌ Fallback also failed: {fallback_error}")
-            return None, None, None
+        # For AMD GPU, try smaller model before giving up
+        if gpu_manager.is_amd_gpu():
+            print("💡 Trying smaller model for AMD GPU...")
+            fallback_model = "Qwen/Qwen2-0.5B-Instruct"
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(fallback_model, trust_remote_code=True)
+                if tokenizer.pad_token is None:
+                    tokenizer.pad_token = tokenizer.eos_token
+                    
+                # Try GPU first
+                try:
+                    print(f"🔧 Loading {fallback_model} on AMD GPU...")
+                    model = AutoModelForCausalLM.from_pretrained(
+                        fallback_model,
+                        torch_dtype=torch.float32,
+                        trust_remote_code=True,
+                        low_cpu_mem_usage=True
+                    ).to('cuda')
+                    print(f"✅ Small model loaded on AMD GPU!")
+                    return tokenizer, model, "cuda"
+                except Exception as gpu_error:
+                    print(f"⚠️ AMD GPU failed even with small model: {gpu_error}")
+                    # Final fallback to CPU
+                    model = AutoModelForCausalLM.from_pretrained(
+                        fallback_model,
+                        torch_dtype=torch.float32,
+                        trust_remote_code=True,
+                        low_cpu_mem_usage=True
+                    )
+                    print(f"✅ Small model loaded on CPU")
+                    return tokenizer, model, "cpu"
+                    
+            except Exception as fallback_error:
+                print(f"❌ All fallbacks failed: {fallback_error}")
+                return None, None, None
+        else:
+            # Standard fallback for other GPUs
+            print("💡 Falling back to smallest model on CPU...")
+            fallback_model = "Qwen/Qwen2-0.5B-Instruct"
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(fallback_model, trust_remote_code=True)
+                model = AutoModelForCausalLM.from_pretrained(
+                    fallback_model,
+                    torch_dtype=torch.float32,
+                    trust_remote_code=True,
+                    low_cpu_mem_usage=True
+                )
+                print(f"✅ Fallback model loaded on CPU")
+                return tokenizer, model, "cpu"
+            except Exception as fallback_error:
+                print(f"❌ Fallback also failed: {fallback_error}")
+                return None, None, None
 
 def optimized_inference_test(tokenizer, model, device, gpu_manager: GPUManager):
-    """Run inference test with GPU-optimized settings"""
+    """Run inference test with progressive AMD GPU fallback strategies"""
     print("\n🚀 Optimized Inference Test")
     print("=" * 50)
     
-    # SRE-themed test prompt with more complexity for GPU testing
-    test_prompt = """You are an SRE AI assistant. A distributed microservices application 
-    is experiencing cascading failures. The load balancer shows 503 errors, 
-    several Kubernetes pods are in CrashLoopBackOff, and monitoring alerts indicate 
-    high memory usage. What systematic approach would you take to diagnose and resolve this issue?"""
+    # SRE-themed test prompt
+    test_prompt = """You are an SRE AI assistant. A web service shows 503 errors and high memory usage. What steps would you take to diagnose this?"""
     
-    print(f"Prompt: {test_prompt[:100]}...")
-    print(f"\nUsing batch size: {gpu_manager.get_optimal_batch_size()}")
+    print(f"Prompt: {test_prompt}")
+    print(f"Using batch size: {gpu_manager.get_optimal_batch_size()}")
     print(f"Mixed precision: {gpu_manager.should_use_mixed_precision()}")
+    
+    if gpu_manager.is_amd_gpu() and device == "cuda":
+        print("🔥 AMD GPU: Attempting inference on GPU!")
+    
+    print(f"Running on: {device}")
     print("\nResponse:")
     print("-" * 30)
     
-    try:
-        # Tokenize with optimized settings
-        inputs = tokenizer(test_prompt, return_tensors="pt")
-        if device != "cpu":
-            inputs = {k: v.to(device) for k, v in inputs.items()}
-        
-        # Generate with GPU-optimized parameters
-        generation_config = {
+    # Progressive fallback strategies for AMD GPU
+    strategies = [
+        ("conservative", {"max_new_tokens": 100, "do_sample": False, "temperature": None, "top_p": None}),
+        ("ultra_conservative", {"max_new_tokens": 50, "do_sample": False, "temperature": None, "top_p": None}),
+        ("minimal", {"max_new_tokens": 25, "do_sample": False, "temperature": None, "top_p": None})
+    ]
+    
+    # If not AMD or if on CPU, use normal strategy
+    if not gpu_manager.is_amd_gpu() or device == "cpu":
+        strategies = [("normal", {
             "max_new_tokens": 200,
             "do_sample": True,
             "temperature": 0.7,
-            "top_p": 0.9,
-            "pad_token_id": tokenizer.eos_token_id
-        }
-        
-        # Add batch size if GPU is capable
-        if gpu_manager.gpu_info and gpu_manager.gpu_info.get('is_ml_ready', False):
-            generation_config["num_beams"] = 1  # Keep it simple for now
-        
-        inference_start = time.time()
-        
-        with torch.no_grad():
-            outputs = model.generate(**inputs, **generation_config)
-        
-        inference_time = time.time() - inference_start
-        
-        # Decode and display response
-        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        response = response[len(test_prompt):].strip()
-        
-        print(response)
-        print(f"\n✅ Inference completed in {inference_time:.2f} seconds")
-        print(f"📊 Tokens/second: ~{generation_config['max_new_tokens']/inference_time:.1f}")
-        
-    except Exception as e:
-        print(f"❌ Inference failed: {e}")
+            "top_p": 0.9
+        })]
+    
+    for strategy_name, generation_params in strategies:
+        try:
+            print(f"🔧 Trying {strategy_name} generation strategy...")
+            
+            # Tokenize inputs
+            inputs = tokenizer(test_prompt, return_tensors="pt")
+            
+            # Move inputs to device
+            if device == "cuda":
+                try:
+                    inputs = {k: v.to(device) for k, v in inputs.items()}
+                except Exception as e:
+                    print(f"⚠️ Failed to move inputs to GPU: {e}")
+                    if gpu_manager.is_amd_gpu():
+                        print("🔧 Moving model to CPU for inference...")
+                        model = model.to('cpu')
+                        device = 'cpu'
+                    else:
+                        raise e
+            
+            # Base generation config
+            generation_config = {
+                "pad_token_id": tokenizer.eos_token_id,
+                "use_cache": True,
+                "return_dict_in_generate": False
+            }
+            
+            # Add strategy-specific params
+            generation_config.update(generation_params)
+            
+            # AMD-specific optimizations
+            if gpu_manager.is_amd_gpu() and device == "cuda":
+                # Force single-threaded generation for AMD
+                torch.set_num_threads(1)
+                # Disable some optimizations
+                generation_config.update({
+                    "num_beams": 1,
+                    "early_stopping": False,
+                    "output_scores": False,
+                    "output_attentions": False,
+                    "output_hidden_states": False
+                })
+            
+            inference_start = time.time()
+            
+            # Try inference with current strategy
+            with torch.no_grad():
+                try:
+                    # Set environment variable to help with HIP errors
+                    if gpu_manager.is_amd_gpu():
+                        os.environ['AMD_SERIALIZE_KERNEL'] = '3'
+                        os.environ['HIP_VISIBLE_DEVICES'] = '0'
+                    
+                    outputs = model.generate(**inputs, **generation_config)
+                    
+                except RuntimeError as runtime_error:
+                    error_msg = str(runtime_error).lower()
+                    if "hip" in error_msg or "invalid device function" in error_msg:
+                        print(f"❌ HIP error with {strategy_name} strategy: {runtime_error}")
+                        if strategy_name == "minimal":
+                            # Last resort: move to CPU
+                            print("🔧 Final fallback: Moving to CPU...")
+                            model = model.to('cpu')
+                            inputs = {k: v.to('cpu') for k, v in inputs.items()}
+                            device = 'cpu'
+                            outputs = model.generate(**inputs, **generation_config)
+                        else:
+                            # Try next strategy
+                            continue
+                    else:
+                        # Non-HIP error, re-raise
+                        raise runtime_error
+            
+            # Success! Process the output
+            inference_time = time.time() - inference_start
+            
+            # Decode response
+            response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            response = response[len(test_prompt):].strip()
+            
+            print(response)
+            print(f"\n✅ Inference completed in {inference_time:.2f} seconds")
+            print(f"📊 Tokens/second: ~{generation_config['max_new_tokens']/inference_time:.1f}")
+            
+            if gpu_manager.is_amd_gpu():
+                if device == "cuda":
+                    print("🔥 SUCCESS: AMD GPU inference worked!")
+                    print(f"💡 Successful strategy: {strategy_name}")
+                else:
+                    print("💡 AMD GPU: Inference completed on CPU after GPU issues")
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Strategy {strategy_name} failed: {e}")
+            if strategy_name == strategies[-1][0]:  # Last strategy
+                print("❌ All strategies failed")
+                if gpu_manager.is_amd_gpu():
+                    print("💡 AMD GPU compatibility issues detected")
+                    print("💡 Suggestions:")
+                    print("   - Check ROCm installation: rocm-smi")
+                    print("   - Update PyTorch: pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm5.6")
+                    print("   - Try smaller batch sizes or models")
+                return False
+            # Continue to next strategy
+            continue
+    
+    return False
 
 def enhanced_memory_monitoring(gpu_manager: GPUManager):
     """Enhanced memory monitoring including GPU-specific metrics"""
@@ -366,18 +567,29 @@ def enhanced_memory_monitoring(gpu_manager: GPUManager):
         gpu_type = gpu_manager.gpu_info.get('gpu_type', '').lower()
         
         if 'nvidia' in gpu_type and torch.cuda.is_available():
-            allocated = torch.cuda.memory_allocated(0)
-            reserved = torch.cuda.memory_reserved(0)
-            total = torch.cuda.get_device_properties(0).total_memory
-            
-            print(f"GPU Memory Allocated: {allocated / 1024**3:.1f}GB")
-            print(f"GPU Memory Reserved: {reserved / 1024**3:.1f}GB")
-            print(f"GPU Memory Total: {total / 1024**3:.1f}GB")
-            print(f"GPU Utilization: {(allocated/total)*100:.1f}%")
+            try:
+                allocated = torch.cuda.memory_allocated(0)
+                reserved = torch.cuda.memory_reserved(0)
+                total = torch.cuda.get_device_properties(0).total_memory
+                
+                print(f"GPU Memory Allocated: {allocated / 1024**3:.1f}GB")
+                print(f"GPU Memory Reserved: {reserved / 1024**3:.1f}GB")
+                print(f"GPU Memory Total: {total / 1024**3:.1f}GB")
+                print(f"GPU Utilization: {(allocated/total)*100:.1f}%")
+            except Exception as e:
+                print(f"⚠️ NVIDIA GPU memory monitoring failed: {e}")
         
-        elif 'amd' in gpu_type:
+        elif 'amd' in gpu_type or 'radeon' in gpu_type:
             print(f"AMD GPU Memory: {gpu_manager.gpu_info['vram_gb']:.1f}GB total")
-            print("💡 Install ROCm tools for detailed AMD GPU memory monitoring")
+            if torch.cuda.is_available():
+                try:
+                    # Try to get basic memory info via ROCm
+                    allocated = torch.cuda.memory_allocated(0)
+                    print(f"GPU Memory Allocated (ROCm): {allocated / 1024**3:.1f}GB")
+                except Exception as e:
+                    print("💡 Install ROCm tools for detailed AMD GPU memory monitoring")
+            else:
+                print("💡 Install ROCm tools for detailed AMD GPU memory monitoring")
         
         else:
             print("GPU memory monitoring not available for this GPU type")
@@ -393,8 +605,9 @@ def save_model_info(tokenizer, model, device, gpu_manager, output_file="./model_
         'tokenizer': tokenizer,
         'device': device,
         'gpu_info': gpu_manager.gpu_info,
-        'batch_size': gpu_manager.get_optimal_batch_size("training"),
-        'use_mixed_precision': gpu_manager.should_use_mixed_precision()
+        'batch_size': gpu_manager.get_optimal_batch_size(),  # FIXED: Removed argument
+        'use_mixed_precision': gpu_manager.should_use_mixed_precision(),
+        'is_amd_gpu': gpu_manager.is_amd_gpu()  # Added for pipeline awareness
     }
     
     try:
@@ -443,12 +656,11 @@ def launch_rag_pipeline(model_info_file, mode="both", test=True):
 
 def main():
     """
-    Enhanced function with RAG/Fine-tuning integration
+    Enhanced main function with AMD GPU compatibility fixes
     """
-    print("🎯 Enhanced SRE AI Training - Full Pipeline")
+    print("🎯 Enhanced SRE AI Training - Full Pipeline (AMD GPU Compatible)")
     print("=" * 70)
     
-    #  existing code here...
     # Initialize GPU manager (this runs Rust detection)
     gpu_manager = GPUManager()
     
@@ -459,14 +671,21 @@ def main():
     tokenizer, model, device = load_model_with_gpu_config(gpu_manager)
     
     if tokenizer and model:
-        #  existing inference test
-        optimized_inference_test(tokenizer, model, device, gpu_manager)
+        # Run inference test (with AMD GPU error handling)
+        inference_success = optimized_inference_test(tokenizer, model, device, gpu_manager)
         enhanced_memory_monitoring(gpu_manager)
         
-        print(f"\n🎉 Basic setup complete!")
+        if inference_success:
+            print(f"\n🎉 Basic setup complete!")
+        else:
+            print(f"\n⚠️ Basic setup complete with some issues")
+            
         print(f"💡 Rust GPU detection: {gpu_manager.gpu_info['gpu_type']}")
         
-        # NEW: Save model info and launch RAG pipeline
+        if gpu_manager.is_amd_gpu():
+            print(f"🔧 AMD GPU detected - using conservative settings")
+        
+        # Save model info and launch RAG pipeline
         model_info_file = save_model_info(tokenizer, model, device, gpu_manager)
         
         if model_info_file:

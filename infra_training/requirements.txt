@@ -11,3 +11,4 @@ trl==0.23.0
 torch>=2.0.0
 transformers>=4.35.0
 tokenizers>=0.14.0
+accelerate>=1.10.1
