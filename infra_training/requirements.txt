@@ -12,3 +12,14 @@ torch>=2.0.0
 transformers>=4.35.0
 tokenizers>=0.14.0
 accelerate>=1.10.1
+
+# RAG dependencies
+faiss-cpu==1.5.3
+sentence-transformers==5.1.1
+pandas==2.3.2
+numpy==2.3.3
+
+# Fine-tuning dependencies
+datasets==4.1.1
+peft==0.17.1
+trl==0.23.0
