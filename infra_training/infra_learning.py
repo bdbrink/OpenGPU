@@ -607,7 +607,6 @@ def save_model_info(tokenizer, model, device, gpu_manager, output_file="./model_
         'gpu_info': gpu_manager.gpu_info,
         'batch_size': gpu_manager.get_optimal_batch_size(),  # FIXED: Removed argument
         'use_mixed_precision': gpu_manager.should_use_mixed_precision(),
-        'is_amd_gpu': gpu_manager.is_amd_gpu()  # Added for pipeline awareness
     }
     
     try:
