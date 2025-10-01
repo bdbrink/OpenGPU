@@ -504,10 +504,10 @@ class SREFineTuner:
         self.model_info = model_info
         self.training_data = self._create_training_dataset()
     
-    def _create_training_dataset(self, markdown_dir="./sre_training_data"):
-    loader = MarkdownTrainingLoader(markdown_dir)
-    examples = loader.load_all_markdown(format_type="auto")
-    return examples if examples else self._fallback_hardcoded_examples()
+    def _create_training_dataset(self, markdown_dir="./training_data"):
+        loader = MarkdownTrainingLoader(markdown_dir)
+        examples = loader.load_all_markdown(format_type="auto")
+        return examples if examples else self._fallback_hardcoded_examples()
     
     def create_dataset(self) -> Dataset:
         """Convert training data to HuggingFace dataset"""
