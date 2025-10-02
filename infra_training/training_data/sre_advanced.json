@@ -1,0 +1,12 @@
+{
+  "training_data": [
+    {
+      "instruction": "How to handle cascading failures?",
+      "response": "Cascading failure prevention:\n1. Implement circuit breakers\n2. Use timeouts and retries\n3. Apply rate limiting\n4. Isolate critical services\n5. Monitor dependency health"
+    }
+  ],
+  "metadata": {
+    "version": "1.0",
+    "topic": "SRE Best Practices"
+  }
+}

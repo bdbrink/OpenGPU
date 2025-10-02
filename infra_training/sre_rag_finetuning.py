@@ -412,6 +412,10 @@ class SREFineTuner:
         print("🔧 LoRA configuration applied")
         peft_model.print_trainable_parameters()
         
+        # Ensure tokenizer has pad token
+        if self.model_info.tokenizer.pad_token is None:
+            self.model_info.tokenizer.pad_token = self.model_info.tokenizer.eos_token
+        
         # Training arguments
         training_args = TrainingArguments(
             output_dir=output_dir,
@@ -428,21 +432,51 @@ class SREFineTuner:
             report_to=None,
         )
         
-        # Data collator
-        data_collator = DataCollatorForLanguageModeling(
-            tokenizer=self.model_info.tokenizer,
-            mlm=False,
-        )
-        
-        # Trainer
-        trainer = SFTTrainer(
-            model=peft_model,
-            args=training_args,
-            train_dataset=train_dataset,
-            tokenizer=self.model_info.tokenizer,
-            data_collator=data_collator,
-            max_seq_length=512,
-        )
+        # Trainer - tokenizer passed differently in newer TRL versions
+        try:
+            # Try newer TRL API (tokenizer as part of model)
+            trainer = SFTTrainer(
+                model=peft_model,
+                args=training_args,
+                train_dataset=train_dataset,
+                dataset_text_field="text",
+                max_seq_length=512,
+                tokenizer=self.model_info.tokenizer,
+                packing=False,
+            )
+        except TypeError as e:
+            # Fallback for older TRL versions or different API
+            print("⚠️ Adjusting for TRL version compatibility...")
+            from transformers import Trainer
+            
+            # Use standard Trainer with data collator
+            data_collator = DataCollatorForLanguageModeling(
+                tokenizer=self.model_info.tokenizer,
+                mlm=False,
+            )
+            
+            # Need to tokenize the dataset first
+            def tokenize_function(examples):
+                return self.model_info.tokenizer(
+                    examples["text"],
+                    padding="max_length",
+                    truncation=True,
+                    max_length=512,
+                    return_tensors="pt"
+                )
+            
+            tokenized_dataset = train_dataset.map(
+                tokenize_function,
+                batched=True,
+                remove_columns=train_dataset.column_names
+            )
+            
+            trainer = Trainer(
+                model=peft_model,
+                args=training_args,
+                train_dataset=tokenized_dataset,
+                data_collator=data_collator,
+            )
         
         # Train
         print("🚀 Starting training...")

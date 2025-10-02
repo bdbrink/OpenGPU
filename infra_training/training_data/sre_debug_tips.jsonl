@@ -1,0 +1,2 @@
+{"instruction": "Explain database connection pooling", "response": "Connection pooling reuses database connections to improve performance:\n- Reduces connection overhead\n- Configure pool size based on load\n- Monitor idle vs active connections\n- Set appropriate timeouts"}
+{"prompt": "What causes memory leaks?", "completion": "Common memory leak causes:\n1. Unreleased references\n2. Event listener accumulation\n3. Cache without eviction\n4. Circular references\n5. Static collections growing unbounded"}

@@ -1,0 +1,10 @@
+[
+  {
+    "instruction": "What's the first step when investigating high CPU usage?",
+    "response": "Start by identifying which process is consuming CPU:\n1. Run `top` or `htop`\n2. Check `kubectl top pods` for container CPU\n3. Review application metrics\n4. Analyze historical trends"
+  },
+  {
+    "question": "How to debug DNS issues in Kubernetes?",
+    "answer": "DNS debugging steps:\n1. Test with `nslookup` from a pod\n2. Check CoreDNS logs\n3. Verify service endpoints\n4. Test external DNS resolution"
+  }
+]
