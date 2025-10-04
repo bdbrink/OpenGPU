@@ -310,13 +310,13 @@ class SREFineTuner:
         return Dataset.from_list(formatted_data)
     
     def setup_lora_config(self) -> LoraConfig:
-        """Setup LoRA configuration"""
+        """Setup LoRA configuration - memory optimized"""
         return LoraConfig(
             task_type=TaskType.CAUSAL_LM,
-            r=16,
-            lora_alpha=32,
+            r=8,  # Reduced from 16 - fewer parameters = less memory
+            lora_alpha=16,  # Reduced proportionally
             lora_dropout=0.1,
-            target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            target_modules=["q_proj", "v_proj"],  # Only attention, not MLP - saves memory
             bias="none"
         )
     
@@ -324,12 +324,23 @@ class SREFineTuner:
         """Fine-tune the model with LoRA"""
         print("🎯 Starting SRE fine-tuning with LoRA...")
         
+        # Clear GPU cache before starting
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            print("🧹 Cleared GPU cache")
+        
         # Create dataset
         train_dataset = self.create_dataset()
         print(f"📚 Created dataset with {len(train_dataset)} examples")
         
-        # Setup LoRA
+        # Setup LoRA with memory-efficient config
         lora_config = self.setup_lora_config()
+        
+        # Enable gradient checkpointing if available
+        if hasattr(self.model_info.model, 'gradient_checkpointing_enable'):
+            self.model_info.model.gradient_checkpointing_enable()
+            print("✅ Gradient checkpointing enabled")
+        
         peft_model = get_peft_model(self.model_info.model, lora_config)
         
         print("🔧 LoRA configuration applied")
@@ -339,20 +350,32 @@ class SREFineTuner:
         if self.model_info.tokenizer.pad_token is None:
             self.model_info.tokenizer.pad_token = self.model_info.tokenizer.eos_token
         
-        # Training arguments
+        # Aggressive memory optimization for training arguments
+        # Reduce batch size if necessary
+        effective_batch_size = max(1, self.model_info.batch_size // 2)  # Halve batch size
+        
+        print(f"💾 Memory optimization:")
+        print(f"   - Batch size: {effective_batch_size} (reduced from {self.model_info.batch_size})")
+        print(f"   - Gradient accumulation: 8 steps")
+        print(f"   - Gradient checkpointing: Enabled")
+        
+        # Training arguments with aggressive memory saving
         training_args = TrainingArguments(
             output_dir=output_dir,
-            per_device_train_batch_size=self.model_info.batch_size,
-            gradient_accumulation_steps=4,
+            per_device_train_batch_size=effective_batch_size,
+            gradient_accumulation_steps=8,  # Increased to compensate for smaller batch
             num_train_epochs=3,
             learning_rate=2e-4,
             fp16=self.model_info.use_mixed_precision,
             logging_steps=10,
-            save_steps=50,
+            save_steps=100,  # Save less frequently to reduce memory spikes
             warmup_steps=10,
-            save_total_limit=2,
+            save_total_limit=1,  # Keep only 1 checkpoint to save memory
             remove_unused_columns=False,
             report_to=None,
+            gradient_checkpointing=True,  # Enable gradient checkpointing
+            optim="adamw_torch",  # Use PyTorch's memory-efficient optimizer
+            max_grad_norm=0.3,  # Gradient clipping for stability
         )
         
         # Trainer - tokenizer passed differently in newer TRL versions
