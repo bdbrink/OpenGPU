@@ -1,56 +1,23 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -e
 
-# entrypoint for kubetrainer infra training image
-# Usage:
-#   ./entrypoint.sh train --config /config/train.yaml
-#   ./entrypoint.sh serve --host 0.0.0.0 --port 8000
-#   ./entrypoint.sh shell
+MODE="${1:-serve}"
 
-SUBCOMMAND=${1:-"--help"}
-shift || true
+echo "🚀 KubeTrainer starting in mode: ${MODE}"
+echo "📂 DATA_DIR: ${DATA_DIR:-/data}"
 
-# create the ready file to signal container is up (can be overwritten by app)
-touch /tmp/kubetrainer_ready
-
-function run_train {
-  echo "[kubetrainer] invoking training: python infra_training/infra_learning.py $*"
-  python infra_training/infra_learning.py "$@"
-}
-
-function run_serve {
-  # if you have a uvicorn app in infra_training/serve.py or similar:
-  echo "[kubetrainer] starting inference server"
-  # Example: uvicorn infra_training.server:app --host 0.0.0.0 --port 8000 --workers 1
-  uvicorn infra_training.server:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers "$@"
-}
-
-case "${SUBCOMMAND}" in
+case "${MODE}" in
   train)
-    run_train "$@"
+    echo "🔥 Running training job"
+    exec python3 infra_learning.py
     ;;
   serve)
-    run_serve "$@"
-    ;;
-  eval)
-    echo "[kubetrainer] running eval"
-    python infra_training/eval.py "$@"
-    ;;
-  shell)
-    /bin/bash
-    ;;
-  --help|-h|help)
-    cat <<EOF
-KubeTrainer infra_training container entrypoint
-Usage:
-  entrypoint.sh train [args...]    # run training script
-  entrypoint.sh serve [args...]    # run inference server
-  entrypoint.sh eval [args...]     # run evaluation
-  entrypoint.sh shell              # open a shell
-EOF
+    echo "🧠 Starting inference service"
+    exec python3 interact.py
     ;;
   *)
-    # default: run as python module
-    python "$SUBCOMMAND" "$@"
+    echo "❌ Unknown mode: ${MODE}"
+    echo "Valid modes: train | serve"
+    exit 1
     ;;
 esac
