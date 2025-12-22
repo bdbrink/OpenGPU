@@ -1,4 +1,4 @@
-.PHONY: help install-linters lint lint-rust lint-python fmt fmt-rust fmt-python fix fix-rust fix-python clean
+.PHONY: help install-linters lint lint-rust lint-python fmt fmt-rust fmt-python fix fix-rust fix-python clean clippy lint-rust
 
 # Colors for output
 CYAN := \033[0;36m
@@ -73,6 +73,13 @@ fix-python: ## Auto-fix Python linting issues
 	@ruff check --fix infra_training/
 	@make fmt-python
 	@echo "$(GREEN)✓ Python auto-fix complete!$(NC)"
+
+clippy:
+	@echo "Running cargo clippy..."
+	cargo clippy --all-targets --all-features -- -D warnings
+
+lint-rust: fmt-rust clippy
+	@echo "Rust formatting + linting complete ✅"
 
 check-all: lint ## Alias for 'make lint'
 
