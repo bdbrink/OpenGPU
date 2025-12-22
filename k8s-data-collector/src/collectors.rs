@@ -5,7 +5,7 @@ use rand::Rng;
 pub fn generate_synthetic_scenarios(count: usize) -> Vec<TrainingExample> {
     let mut scenarios = Vec::new();
     let mut rng = rand::thread_rng();
-    
+
     let scenario_templates = vec![
         // OOMKilled scenarios
         SyntheticTemplate {
@@ -71,12 +71,12 @@ pub fn generate_synthetic_scenarios(count: usize) -> Vec<TrainingExample> {
             tags: vec!["service", "networking"],
         },
     ];
-    
+
     for i in 0..count {
         let template = &scenario_templates[rng.gen_range(0..scenario_templates.len())];
-        
+
         let (input, output) = fill_template(template, &mut rng);
-        
+
         scenarios.push(TrainingExample {
             id: format!("synthetic-{}", i),
             resource_type: "synthetic".to_string(),
@@ -91,7 +91,7 @@ pub fn generate_synthetic_scenarios(count: usize) -> Vec<TrainingExample> {
             timestamp: chrono::Utc::now(),
         });
     }
-    
+
     scenarios
 }
 
@@ -106,43 +106,55 @@ fn fill_template(template: &SyntheticTemplate, rng: &mut impl Rng) -> (String, S
     let replacements = vec![
         ("{memory}", vec!["256Mi", "512Mi", "1Gi", "2Gi", "4Gi"]),
         ("{restarts}", vec!["5", "10", "15", "20", "50"]),
-        ("{error}", vec![
-            "connection refused",
-            "config file not found",
-            "database connection failed",
-            "port already in use",
-        ]),
-        ("{image}", vec![
-            "registry.example.com/app:v1.2.3",
-            "docker.io/myapp:latest",
-            "gcr.io/project/service:sha256",
-        ]),
+        (
+            "{error}",
+            vec![
+                "connection refused",
+                "config file not found",
+                "database connection failed",
+                "port already in use",
+            ],
+        ),
+        (
+            "{image}",
+            vec![
+                "registry.example.com/app:v1.2.3",
+                "docker.io/myapp:latest",
+                "gcr.io/project/service:sha256",
+            ],
+        ),
         ("{cpu}", vec!["85", "90", "95", "98"]),
         ("{autoscale}", vec!["enabled", "disabled"]),
         ("{disk}", vec!["5", "3", "1", "0.5"]),
         ("{probe_type}", vec!["HTTP GET", "TCP", "Exec"]),
         ("{timeout}", vec!["3", "5", "10"]),
         ("{failures}", vec!["3", "5", "10"]),
-        ("{reason}", vec![
-            "Insufficient cpu",
-            "Insufficient memory",
-            "No nodes available",
-            "PVC pending",
-        ]),
-        ("{service}", vec!["api-service", "web-frontend", "database-proxy"]),
+        (
+            "{reason}",
+            vec![
+                "Insufficient cpu",
+                "Insufficient memory",
+                "No nodes available",
+                "PVC pending",
+            ],
+        ),
+        (
+            "{service}",
+            vec!["api-service", "web-frontend", "database-proxy"],
+        ),
         ("{healthy}", vec!["0", "1", "2"]),
         ("{total}", vec!["3", "5", "10"]),
         ("{lb_status}", vec!["healthy", "degraded", "unhealthy"]),
     ];
-    
+
     let mut input = template.input.to_string();
     let mut output = template.output.to_string();
-    
+
     for (placeholder, options) in replacements {
         let value = options[rng.gen_range(0..options.len())];
         input = input.replace(placeholder, value);
         output = output.replace(placeholder, value);
     }
-    
+
     (input, output)
 }

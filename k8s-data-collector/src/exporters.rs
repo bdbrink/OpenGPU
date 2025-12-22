@@ -1,8 +1,8 @@
+use crate::models::TrainingExample;
 use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
-use crate::models::TrainingExample;
 
 pub fn export_training_data(
     data: &[TrainingExample],
@@ -18,15 +18,14 @@ pub fn export_training_data(
 
 fn export_jsonl(data: &[TrainingExample], output_path: &Path) -> Result<()> {
     let path = output_path.with_extension("jsonl");
-    let file = File::create(&path)
-        .context(format!("Failed to create file: {:?}", path))?;
+    let file = File::create(&path).context(format!("Failed to create file: {:?}", path))?;
     let mut writer = BufWriter::new(file);
-    
+
     for example in data {
         let json = serde_json::to_string(example)?;
         writeln!(writer, "{}", json)?;
     }
-    
+
     writer.flush()?;
     tracing::info!("📝 Wrote {} examples to {:?}", data.len(), path);
     Ok(())
@@ -34,22 +33,20 @@ fn export_jsonl(data: &[TrainingExample], output_path: &Path) -> Result<()> {
 
 fn export_json(data: &[TrainingExample], output_path: &Path) -> Result<()> {
     let path = output_path.with_extension("json");
-    let file = File::create(&path)
-        .context(format!("Failed to create file: {:?}", path))?;
-    
+    let file = File::create(&path).context(format!("Failed to create file: {:?}", path))?;
+
     serde_json::to_writer_pretty(file, &data)?;
-    
+
     tracing::info!("📝 Wrote {} examples to {:?}", data.len(), path);
     Ok(())
 }
 
 fn export_csv(data: &[TrainingExample], output_path: &Path) -> Result<()> {
     let path = output_path.with_extension("csv");
-    let file = File::create(&path)
-        .context(format!("Failed to create file: {:?}", path))?;
-    
+    let file = File::create(&path).context(format!("Failed to create file: {:?}", path))?;
+
     let mut writer = csv::Writer::from_writer(file);
-    
+
     // Write header
     writer.write_record(&[
         "id",
@@ -60,7 +57,7 @@ fn export_csv(data: &[TrainingExample], output_path: &Path) -> Result<()> {
         "namespace",
         "timestamp",
     ])?;
-    
+
     // Write data
     for example in data {
         writer.write_record(&[
@@ -73,7 +70,7 @@ fn export_csv(data: &[TrainingExample], output_path: &Path) -> Result<()> {
             &example.timestamp.to_rfc3339(),
         ])?;
     }
-    
+
     writer.flush()?;
     tracing::info!("📝 Wrote {} examples to {:?}", data.len(), path);
     Ok(())

@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use k8s_openapi::api::{
-    apps::v1::{Deployment, StatefulSet, DaemonSet},
-    core::v1::{Event, Node, Pod, Service, PersistentVolumeClaim, PersistentVolume},
+    apps::v1::{DaemonSet, Deployment, StatefulSet},
     batch::v1::Job,
+    core::v1::{Event, Node, PersistentVolume, PersistentVolumeClaim, Pod, Service},
     storage::v1::StorageClass,
 };
 use serde::{Deserialize, Serialize};
@@ -12,19 +12,19 @@ use serde::{Deserialize, Serialize};
 pub struct TrainingExample {
     /// Unique identifier
     pub id: String,
-    
+
     /// Type of resource (pod, deployment, event, etc.)
     pub resource_type: String,
-    
+
     /// The context/input for the model
     pub input: String,
-    
+
     /// The expected output/diagnosis
     pub output: String,
-    
+
     /// Additional metadata
     pub metadata: TrainingMetadata,
-    
+
     /// Timestamp
     pub timestamp: DateTime<Utc>,
 }
@@ -90,18 +90,22 @@ impl PersistentVolumeTrainingData {
         let metadata = pv.metadata;
         let spec = pv.spec.unwrap_or_default();
         let status = pv.status.unwrap_or_default();
-        
+
         let name = metadata.name.unwrap_or_default();
-        let storage_class = spec.storage_class_name.unwrap_or_else(|| "default".to_string());
-        let capacity = spec.capacity
+        let storage_class = spec
+            .storage_class_name
+            .unwrap_or_else(|| "default".to_string());
+        let capacity = spec
+            .capacity
             .and_then(|c| c.get("storage").cloned())
             .map(|q| q.0)
             .unwrap_or_else(|| "unknown".to_string());
         let access_modes = spec.access_modes.unwrap_or_default();
-        let reclaim_policy = spec.persistent_volume_reclaim_policy
+        let reclaim_policy = spec
+            .persistent_volume_reclaim_policy
             .unwrap_or_else(|| "Retain".to_string());
         let pv_status = status.phase.unwrap_or_else(|| "Unknown".to_string());
-        
+
         Self {
             name,
             status: pv_status,
@@ -118,12 +122,12 @@ impl PodTrainingData {
         let metadata = pod.metadata;
         let spec = pod.spec.unwrap_or_default();
         let status = pod.status.unwrap_or_default();
-        
+
         let name = metadata.name.unwrap_or_default();
         let namespace = metadata.namespace.unwrap_or_else(|| "default".to_string());
-        
+
         let pod_status = status.phase.unwrap_or_else(|| "Unknown".to_string());
-        
+
         let containers: Vec<ContainerInfo> = status
             .container_statuses
             .unwrap_or_default()
@@ -134,7 +138,10 @@ impl PodTrainingData {
                     if state.running.is_some() {
                         "Running".to_string()
                     } else if state.waiting.is_some() {
-                        format!("Waiting: {}", state.waiting.unwrap().reason.unwrap_or_default())
+                        format!(
+                            "Waiting: {}",
+                            state.waiting.unwrap().reason.unwrap_or_default()
+                        )
                     } else if state.terminated.is_some() {
                         let term = state.terminated.unwrap();
                         format!("Terminated: {}", term.reason.unwrap_or_default())
@@ -144,11 +151,12 @@ impl PodTrainingData {
                 } else {
                     "Unknown".to_string()
                 };
-                
-                let last_exit_code = cs.last_state
+
+                let last_exit_code = cs
+                    .last_state
                     .and_then(|s| s.terminated)
                     .map(|t| t.exit_code);
-                
+
                 ContainerInfo {
                     name: cs.name.clone(),
                     image: cs.image,
@@ -159,9 +167,9 @@ impl PodTrainingData {
                 }
             })
             .collect();
-        
+
         let restart_count = containers.iter().map(|c| c.restart_count).sum();
-        
+
         let conditions: Vec<String> = status
             .conditions
             .unwrap_or_default()
@@ -169,31 +177,35 @@ impl PodTrainingData {
             .filter(|c| c.status == "False")
             .map(|c| format!("{}: {}", c.type_, c.message.unwrap_or_default()))
             .collect();
-        
+
         let (resource_requests, resource_limits) = spec
             .containers
             .get(0)
             .map(|c| {
-                let requests = c.resources.as_ref()
+                let requests = c
+                    .resources
+                    .as_ref()
                     .and_then(|r| r.requests.as_ref())
                     .map(|req| ResourceInfo {
                         cpu: req.get("cpu").map(|v| v.0.clone()),
                         memory: req.get("memory").map(|v| v.0.clone()),
                     })
                     .unwrap_or_default();
-                
-                let limits = c.resources.as_ref()
+
+                let limits = c
+                    .resources
+                    .as_ref()
                     .and_then(|r| r.limits.as_ref())
                     .map(|lim| ResourceInfo {
                         cpu: lim.get("cpu").map(|v| v.0.clone()),
                         memory: lim.get("memory").map(|v| v.0.clone()),
                     })
                     .unwrap_or_default();
-                
+
                 (requests, limits)
             })
             .unwrap_or_default();
-        
+
         Self {
             name,
             namespace,
@@ -206,14 +218,14 @@ impl PodTrainingData {
             events: Vec::new(),
         }
     }
-    
+
     pub fn has_problems(&self) -> bool {
-        self.status != "Running" 
-            || self.restart_count > 3 
+        self.status != "Running"
+            || self.restart_count > 3
             || !self.conditions.is_empty()
             || self.containers.iter().any(|c| !c.ready)
     }
-    
+
     pub fn generate_input(&self) -> String {
         format!(
             "Analyze this Kubernetes pod:\n\
@@ -235,20 +247,26 @@ impl PodTrainingData {
             }
         )
     }
-    
+
     pub fn generate_output(&self) -> String {
         let mut diagnosis = Vec::new();
-        
+
         if self.status != "Running" {
-            diagnosis.push(format!("Pod is in {} state - investigate pod events and logs", self.status));
+            diagnosis.push(format!(
+                "Pod is in {} state - investigate pod events and logs",
+                self.status
+            ));
         }
-        
+
         if self.restart_count > 10 {
-            diagnosis.push("High restart count indicates crashlooping - check application logs for errors".to_string());
+            diagnosis.push(
+                "High restart count indicates crashlooping - check application logs for errors"
+                    .to_string(),
+            );
         } else if self.restart_count > 3 {
             diagnosis.push("Elevated restart count - monitor for stability issues".to_string());
         }
-        
+
         for container in &self.containers {
             if !container.ready {
                 diagnosis.push(format!(
@@ -256,7 +274,7 @@ impl PodTrainingData {
                     container.name, container.state
                 ));
             }
-            
+
             if let Some(exit_code) = container.last_exit_code {
                 if exit_code != 0 {
                     diagnosis.push(format!(
@@ -266,17 +284,19 @@ impl PodTrainingData {
                 }
             }
         }
-        
+
         for condition in &self.conditions {
             diagnosis.push(format!("Pod condition: {}", condition));
         }
-        
+
         if diagnosis.is_empty() {
             "Pod appears healthy - no immediate issues detected".to_string()
         } else {
             format!(
                 "Diagnosis:\n{}",
-                diagnosis.iter().enumerate()
+                diagnosis
+                    .iter()
+                    .enumerate()
                     .map(|(i, d)| format!("{}. {}", i + 1, d))
                     .collect::<Vec<_>>()
                     .join("\n")
@@ -302,18 +322,19 @@ impl DeploymentTrainingData {
         let metadata = deployment.metadata;
         let spec = deployment.spec.unwrap_or_default();
         let status = deployment.status.unwrap_or_default();
-        
+
         let name = metadata.name.unwrap_or_default();
         let namespace = metadata.namespace.unwrap_or_else(|| "default".to_string());
         let replicas_desired = spec.replicas.unwrap_or(1);
-        
+
         let replicas_ready = status.ready_replicas.unwrap_or(0);
         let replicas_available = status.available_replicas.unwrap_or(0);
-        
-        let strategy = spec.strategy
+
+        let strategy = spec
+            .strategy
             .and_then(|s| s.type_)
             .unwrap_or_else(|| "RollingUpdate".to_string());
-        
+
         let conditions: Vec<String> = status
             .conditions
             .unwrap_or_default()
@@ -321,7 +342,7 @@ impl DeploymentTrainingData {
             .filter(|c| c.status == "False")
             .map(|c| format!("{}: {}", c.type_, c.message.unwrap_or_default()))
             .collect();
-        
+
         Self {
             name,
             namespace,
@@ -351,17 +372,17 @@ impl StatefulSetTrainingData {
         let metadata = sts.metadata;
         let spec = sts.spec.unwrap_or_default();
         let status = sts.status.unwrap_or_default();
-        
+
         let name = metadata.name.unwrap_or_default();
         let namespace = metadata.namespace.unwrap_or_else(|| "default".to_string());
         let replicas_desired = spec.replicas.unwrap_or(1);
         let service_name = spec.service_name;
-        
+
         let replicas_ready = status.ready_replicas.unwrap_or(0);
         let replicas_current = status.current_replicas.unwrap_or(0);
-        
+
         let conditions: Vec<String> = vec![];
-        
+
         Self {
             name,
             namespace,
@@ -391,16 +412,16 @@ impl DaemonSetTrainingData {
     pub fn from_daemonset(ds: DaemonSet) -> Self {
         let metadata = ds.metadata;
         let status = ds.status.unwrap_or_default();
-        
+
         let name = metadata.name.unwrap_or_default();
         let namespace = metadata.namespace.unwrap_or_else(|| "default".to_string());
-        
+
         let desired_scheduled = status.desired_number_scheduled;
         let current_scheduled = status.current_number_scheduled;
         let number_ready = status.number_ready;
         let number_available = status.number_available.unwrap_or(0);
         let number_misscheduled = status.number_misscheduled;
-        
+
         let conditions: Vec<String> = status
             .conditions
             .unwrap_or_default()
@@ -408,7 +429,7 @@ impl DaemonSetTrainingData {
             .filter(|c| c.status == "False")
             .map(|c| format!("{}: {}", c.type_, c.message.unwrap_or_default()))
             .collect();
-        
+
         Self {
             name,
             namespace,
@@ -440,17 +461,17 @@ impl JobTrainingData {
         let metadata = job.metadata;
         let spec = job.spec.unwrap_or_default();
         let status = job.status.unwrap_or_default();
-        
+
         let name = metadata.name.unwrap_or_default();
         let namespace = metadata.namespace.unwrap_or_else(|| "default".to_string());
-        
+
         let completions = spec.completions.unwrap_or(1);
         let parallelism = spec.parallelism.unwrap_or(1);
-        
+
         let succeeded = status.succeeded.unwrap_or(0);
         let failed = status.failed.unwrap_or(0);
         let active = status.active.unwrap_or(0);
-        
+
         let conditions: Vec<String> = status
             .conditions
             .unwrap_or_default()
@@ -458,7 +479,7 @@ impl JobTrainingData {
             .filter(|c| c.status == "False")
             .map(|c| format!("{}: {}", c.type_, c.message.unwrap_or_default()))
             .collect();
-        
+
         Self {
             name,
             namespace,
@@ -488,14 +509,14 @@ impl ServiceTrainingData {
     pub fn from_service(svc: Service) -> Self {
         let metadata = svc.metadata;
         let spec = svc.spec.unwrap_or_default();
-        
+
         let name = metadata.name.unwrap_or_default();
         let namespace = metadata.namespace.unwrap_or_else(|| "default".to_string());
-        
+
         let service_type = spec.type_.unwrap_or_else(|| "ClusterIP".to_string());
         let cluster_ip = spec.cluster_ip.unwrap_or_default();
         let external_ips = spec.external_ips.unwrap_or_default();
-        
+
         let ports: Vec<String> = spec
             .ports
             .unwrap_or_default()
@@ -509,14 +530,14 @@ impl ServiceTrainingData {
                 )
             })
             .collect();
-        
+
         let selector: Vec<String> = spec
             .selector
             .unwrap_or_default()
             .into_iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect();
-        
+
         Self {
             name,
             namespace,
@@ -546,21 +567,23 @@ impl PvcTrainingData {
         let metadata = pvc.metadata;
         let spec = pvc.spec.unwrap_or_default();
         let status = pvc.status.unwrap_or_default();
-        
+
         let name = metadata.name.unwrap_or_default();
         let namespace = metadata.namespace.unwrap_or_else(|| "default".to_string());
-        
+
         let pvc_status = status.phase.unwrap_or_else(|| "Unknown".to_string());
-        let storage_class = spec.storage_class_name.unwrap_or_else(|| "default".to_string());
-        
+        let storage_class = spec
+            .storage_class_name
+            .unwrap_or_else(|| "default".to_string());
+
         let capacity = status
             .capacity
             .and_then(|c| c.get("storage").map(|v| v.0.clone()))
             .unwrap_or_else(|| "unknown".to_string());
-        
+
         let access_modes = spec.access_modes.unwrap_or_default();
         let volume_name = spec.volume_name.unwrap_or_default();
-        
+
         Self {
             name,
             namespace,
@@ -600,20 +623,22 @@ pub struct StorageClassTrainingData {
 impl StorageClassTrainingData {
     pub fn from_storageclass(sc: StorageClass) -> Self {
         let metadata = sc.metadata;
-        
+
         let name = metadata.name.unwrap_or_default();
         let provisioner = sc.provisioner;
         let reclaim_policy = sc.reclaim_policy.unwrap_or_else(|| "Delete".to_string());
-        let volume_binding_mode = sc.volume_binding_mode.unwrap_or_else(|| "Immediate".to_string());
+        let volume_binding_mode = sc
+            .volume_binding_mode
+            .unwrap_or_else(|| "Immediate".to_string());
         let allow_volume_expansion = sc.allow_volume_expansion.unwrap_or(false);
-        
+
         let parameters: Vec<String> = sc
             .parameters
             .unwrap_or_default()
             .into_iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect();
-        
+
         Self {
             name,
             provisioner,
@@ -639,7 +664,7 @@ pub struct EventTrainingData {
 impl EventTrainingData {
     pub fn from_event(event: Event, cutoff: DateTime<Utc>) -> Option<Self> {
         let metadata = event.metadata;
-        
+
         // Try to get timestamp - prefer last_timestamp, fall back to event_time
         // Both Time and MicroTime contain DateTime<Utc> in their .0 field
         let timestamp = if let Some(last_ts) = event.last_timestamp {
@@ -651,11 +676,11 @@ impl EventTrainingData {
         } else {
             return None;
         };
-        
+
         if timestamp < cutoff {
             return None;
         }
-        
+
         Some(Self {
             reason: event.reason.unwrap_or_default(),
             message: event.message.unwrap_or_default(),
@@ -665,7 +690,7 @@ impl EventTrainingData {
             timestamp,
         })
     }
-    
+
     pub fn is_problem(&self) -> bool {
         self.type_ == "Warning" || self.type_ == "Error"
     }
@@ -685,23 +710,25 @@ impl NodeTrainingData {
     pub fn from_node(node: Node) -> Self {
         let metadata = node.metadata;
         let status = node.status.unwrap_or_default();
-        
+
         let name = metadata.name.unwrap_or_default();
-        
-        let capacity = status.capacity
+
+        let capacity = status
+            .capacity
             .map(|cap| ResourceInfo {
                 cpu: cap.get("cpu").map(|v| v.0.clone()),
                 memory: cap.get("memory").map(|v| v.0.clone()),
             })
             .unwrap_or_default();
-        
-        let allocatable = status.allocatable
+
+        let allocatable = status
+            .allocatable
             .map(|alloc| ResourceInfo {
                 cpu: alloc.get("cpu").map(|v| v.0.clone()),
                 memory: alloc.get("memory").map(|v| v.0.clone()),
             })
             .unwrap_or_default();
-        
+
         let conditions: Vec<String> = status
             .conditions
             .unwrap_or_default()
@@ -712,11 +739,12 @@ impl NodeTrainingData {
             })
             .map(|c| format!("{}: {}", c.type_, c.message.unwrap_or_default()))
             .collect();
-        
-        let kubelet_version = status.node_info
+
+        let kubelet_version = status
+            .node_info
             .map(|info| info.kubelet_version)
             .unwrap_or_default();
-        
+
         Self {
             name,
             capacity,
@@ -737,7 +765,7 @@ impl TrainingExample {
         } else {
             Severity::Warning
         };
-        
+
         Self {
             id,
             resource_type: "pod".to_string(),
@@ -752,10 +780,10 @@ impl TrainingExample {
             timestamp: Utc::now(),
         }
     }
-    
+
     pub fn from_deployment(dep_data: DeploymentTrainingData) -> Self {
         let id = format!("deployment-{}-{}", dep_data.namespace, dep_data.name);
-        
+
         let input = format!(
             "Analyze this Kubernetes deployment:\n\
             Name: {}\n\
@@ -769,7 +797,7 @@ impl TrainingExample {
             dep_data.replicas_ready,
             dep_data.replicas_available
         );
-        
+
         let output = if dep_data.replicas_ready == dep_data.replicas_desired {
             "Deployment is healthy - all replicas are ready".to_string()
         } else {
@@ -778,7 +806,7 @@ impl TrainingExample {
                 dep_data.replicas_ready, dep_data.replicas_desired
             )
         };
-        
+
         Self {
             id,
             resource_type: "deployment".to_string(),
@@ -797,33 +825,32 @@ impl TrainingExample {
             timestamp: Utc::now(),
         }
     }
-    
+
     pub fn from_event(event_data: EventTrainingData) -> Self {
-        let id = format!("event-{}-{}", event_data.namespace, event_data.timestamp.timestamp());
-        
+        let id = format!(
+            "event-{}-{}",
+            event_data.namespace,
+            event_data.timestamp.timestamp()
+        );
+
         let input = format!(
             "Kubernetes event:\n\
             Type: {}\n\
             Reason: {}\n\
             Object: {}\n\
             Message: {}",
-            event_data.type_,
-            event_data.reason,
-            event_data.involved_object,
-            event_data.message
+            event_data.type_, event_data.reason, event_data.involved_object, event_data.message
         );
-        
+
         let output = format!(
             "Event analysis: {} event for {} - {}",
-            event_data.type_,
-            event_data.involved_object,
-            event_data.message
+            event_data.type_, event_data.involved_object, event_data.message
         );
-        
+
         let is_problem = event_data.is_problem();
         let timestamp = event_data.timestamp;
         let namespace = event_data.namespace;
-        
+
         Self {
             id,
             resource_type: "event".to_string(),
@@ -842,10 +869,10 @@ impl TrainingExample {
             timestamp,
         }
     }
-    
+
     pub fn from_node(node_data: NodeTrainingData) -> Self {
         let id = format!("node-{}", node_data.name);
-        
+
         let input = format!(
             "Analyze this Kubernetes node:\n\
             Name: {}\n\
@@ -857,13 +884,13 @@ impl TrainingExample {
             node_data.capacity.memory.as_deref().unwrap_or("unknown"),
             node_data.kubelet_version
         );
-        
+
         let output = if node_data.conditions.is_empty() {
             "Node is healthy - all conditions normal".to_string()
         } else {
             format!("Node issues detected:\n{}", node_data.conditions.join("\n"))
         };
-        
+
         Self {
             id,
             resource_type: "node".to_string(),
@@ -882,10 +909,10 @@ impl TrainingExample {
             timestamp: Utc::now(),
         }
     }
-    
+
     pub fn from_statefulset(sts_data: StatefulSetTrainingData) -> Self {
         let id = format!("statefulset-{}-{}", sts_data.namespace, sts_data.name);
-        
+
         let input = format!(
             "Analyze this Kubernetes StatefulSet:\n\
             Name: {}\n\
@@ -901,7 +928,7 @@ impl TrainingExample {
             sts_data.replicas_current,
             sts_data.service_name
         );
-        
+
         let output = if sts_data.replicas_ready == sts_data.replicas_desired {
             "StatefulSet is healthy - all replicas are ready".to_string()
         } else {
@@ -910,7 +937,7 @@ impl TrainingExample {
                 sts_data.replicas_ready, sts_data.replicas_desired
             )
         };
-        
+
         Self {
             id,
             resource_type: "statefulset".to_string(),
@@ -929,10 +956,10 @@ impl TrainingExample {
             timestamp: Utc::now(),
         }
     }
-    
+
     pub fn from_daemonset(ds_data: DaemonSetTrainingData) -> Self {
         let id = format!("daemonset-{}-{}", ds_data.namespace, ds_data.name);
-        
+
         let input = format!(
             "Analyze this Kubernetes DaemonSet:\n\
             Name: {}\n\
@@ -950,29 +977,29 @@ impl TrainingExample {
             ds_data.number_available,
             ds_data.number_misscheduled
         );
-        
+
         let mut issues = Vec::new();
-        
+
         if ds_data.number_ready < ds_data.desired_scheduled {
             issues.push(format!(
                 "Only {}/{} pods are ready",
                 ds_data.number_ready, ds_data.desired_scheduled
             ));
         }
-        
+
         if ds_data.number_misscheduled > 0 {
             issues.push(format!(
                 "{} pods are misscheduled - check node selectors and tolerations",
                 ds_data.number_misscheduled
             ));
         }
-        
+
         let output = if issues.is_empty() {
             "DaemonSet is healthy - all desired pods are running".to_string()
         } else {
             format!("DaemonSet issues:\n{}", issues.join("\n"))
         };
-        
+
         Self {
             id,
             resource_type: "daemonset".to_string(),
@@ -991,10 +1018,10 @@ impl TrainingExample {
             timestamp: Utc::now(),
         }
     }
-    
+
     pub fn from_job(job_data: JobTrainingData) -> Self {
         let id = format!("job-{}-{}", job_data.namespace, job_data.name);
-        
+
         let input = format!(
             "Analyze this Kubernetes Job:\n\
             Name: {}\n\
@@ -1012,7 +1039,7 @@ impl TrainingExample {
             job_data.failed,
             job_data.active
         );
-        
+
         let output = if job_data.succeeded >= job_data.completions {
             "Job completed successfully".to_string()
         } else if job_data.failed > 0 {
@@ -1028,7 +1055,7 @@ impl TrainingExample {
         } else {
             "Job status unknown - investigate pod states".to_string()
         };
-        
+
         Self {
             id,
             resource_type: "job".to_string(),
@@ -1049,10 +1076,10 @@ impl TrainingExample {
             timestamp: Utc::now(),
         }
     }
-    
+
     pub fn from_service(svc_data: ServiceTrainingData) -> Self {
         let id = format!("service-{}-{}", svc_data.namespace, svc_data.name);
-        
+
         let input = format!(
             "Analyze this Kubernetes Service:\n\
             Name: {}\n\
@@ -1068,7 +1095,7 @@ impl TrainingExample {
             svc_data.ports.join(", "),
             svc_data.selector.join(", ")
         );
-        
+
         let output = if svc_data.selector.is_empty() {
             "Service has no selector - it won't route traffic to any pods".to_string()
         } else {
@@ -1077,7 +1104,7 @@ impl TrainingExample {
                 svc_data.selector.join(", ")
             )
         };
-        
+
         Self {
             id,
             resource_type: "service".to_string(),
@@ -1098,98 +1125,113 @@ impl TrainingExample {
     }
 
     pub fn from_storageclass(sc_data: StorageClassTrainingData) -> Self {
-    let id = format!("storageclass-{}", sc_data.name);
-    
-    let input = format!(
-        "Analyze this Kubernetes StorageClass:\n\
+        let id = format!("storageclass-{}", sc_data.name);
+
+        let input = format!(
+            "Analyze this Kubernetes StorageClass:\n\
         Name: {}\n\
         Provisioner: {}\n\
         Reclaim Policy: {}\n\
         Volume Binding Mode: {}\n\
         Allow Volume Expansion: {}\n\
         Parameters: {}",
-        sc_data.name,
-        sc_data.provisioner,
-        sc_data.reclaim_policy,
-        sc_data.volume_binding_mode,
-        sc_data.allow_volume_expansion,
-        sc_data.parameters.join(", ")
-    );
-    
-    let output = format!(
-        "StorageClass '{}' uses {} provisioner with {} reclaim policy. \
-        Volume expansion is {}. Binding mode: {}",
-        sc_data.name,
-        sc_data.provisioner,
-        sc_data.reclaim_policy,
-        if sc_data.allow_volume_expansion { "enabled" } else { "disabled" },
-        sc_data.volume_binding_mode
-    );
-    
-    Self {
-        id,
-        resource_type: "storageclass".to_string(),
-        input,
-        output,
-        metadata: TrainingMetadata {
-            namespace: None, // StorageClass is cluster-scoped
-            cluster: None,
-            severity: Severity::Normal,
-            tags: vec!["kubernetes".to_string(), "storageclass".to_string(), "storage".to_string()],
-        },
-        timestamp: Utc::now(),
-    }
-}
+            sc_data.name,
+            sc_data.provisioner,
+            sc_data.reclaim_policy,
+            sc_data.volume_binding_mode,
+            sc_data.allow_volume_expansion,
+            sc_data.parameters.join(", ")
+        );
 
-pub fn from_pv(pv_data: PersistentVolumeTrainingData) -> Self {
-    let id = format!("pv-{}", pv_data.name);
-    
-    let input = format!(
-        "Analyze this Kubernetes PersistentVolume:\n\
+        let output = format!(
+            "StorageClass '{}' uses {} provisioner with {} reclaim policy. \
+        Volume expansion is {}. Binding mode: {}",
+            sc_data.name,
+            sc_data.provisioner,
+            sc_data.reclaim_policy,
+            if sc_data.allow_volume_expansion {
+                "enabled"
+            } else {
+                "disabled"
+            },
+            sc_data.volume_binding_mode
+        );
+
+        Self {
+            id,
+            resource_type: "storageclass".to_string(),
+            input,
+            output,
+            metadata: TrainingMetadata {
+                namespace: None, // StorageClass is cluster-scoped
+                cluster: None,
+                severity: Severity::Normal,
+                tags: vec![
+                    "kubernetes".to_string(),
+                    "storageclass".to_string(),
+                    "storage".to_string(),
+                ],
+            },
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn from_pv(pv_data: PersistentVolumeTrainingData) -> Self {
+        let id = format!("pv-{}", pv_data.name);
+
+        let input = format!(
+            "Analyze this Kubernetes PersistentVolume:\n\
         Name: {}\n\
         Status: {}\n\
         Storage Class: {}\n\
         Capacity: {}\n\
         Access Modes: {}\n\
         Reclaim Policy: {}",
-        pv_data.name,
-        pv_data.status,
-        pv_data.storage_class,
-        pv_data.capacity,
-        pv_data.access_modes.join(", "),
-        pv_data.reclaim_policy
-    );
-    
-    let output = match pv_data.status.as_str() {
-        "Available" => "PV is available and ready to be bound to a PVC".to_string(),
-        "Bound" => "PV is bound to a PVC and in use".to_string(),
-        "Released" => "PV was bound but the PVC was deleted - check reclaim policy".to_string(),
-        "Failed" => "PV has failed and needs attention".to_string(),
-        _ => format!("PV status: {} - review volume configuration", pv_data.status),
-    };
-    
-    Self {
-        id,
-        resource_type: "pv".to_string(),
-        input,
-        output,
-        metadata: TrainingMetadata {
-            namespace: None,
-            cluster: None,
-            severity: match pv_data.status.as_str() {
-                "Available" | "Bound" => Severity::Normal,
-                "Failed" => Severity::Critical,
-                _ => Severity::Warning,
+            pv_data.name,
+            pv_data.status,
+            pv_data.storage_class,
+            pv_data.capacity,
+            pv_data.access_modes.join(", "),
+            pv_data.reclaim_policy
+        );
+
+        let output = match pv_data.status.as_str() {
+            "Available" => "PV is available and ready to be bound to a PVC".to_string(),
+            "Bound" => "PV is bound to a PVC and in use".to_string(),
+            "Released" => "PV was bound but the PVC was deleted - check reclaim policy".to_string(),
+            "Failed" => "PV has failed and needs attention".to_string(),
+            _ => format!(
+                "PV status: {} - review volume configuration",
+                pv_data.status
+            ),
+        };
+
+        Self {
+            id,
+            resource_type: "pv".to_string(),
+            input,
+            output,
+            metadata: TrainingMetadata {
+                namespace: None,
+                cluster: None,
+                severity: match pv_data.status.as_str() {
+                    "Available" | "Bound" => Severity::Normal,
+                    "Failed" => Severity::Critical,
+                    _ => Severity::Warning,
+                },
+                tags: vec![
+                    "kubernetes".to_string(),
+                    "pv".to_string(),
+                    "storage".to_string(),
+                ],
             },
-            tags: vec!["kubernetes".to_string(), "pv".to_string(), "storage".to_string()],
-        },
-        timestamp: Utc::now(),
+            timestamp: Utc::now(),
+        }
     }
-}
-    
+
     pub fn from_pvc(pvc_data: PvcTrainingData) -> Self {
         let id = format!("pvc-{}-{}", pvc_data.namespace, pvc_data.name);
-        
+
         let input = format!(
             "Analyze this Kubernetes PersistentVolumeClaim:\n\
             Name: {}\n\
@@ -1205,14 +1247,17 @@ pub fn from_pv(pv_data: PersistentVolumeTrainingData) -> Self {
             pvc_data.capacity,
             pvc_data.access_modes.join(", ")
         );
-        
+
         let output = match pvc_data.status.as_str() {
             "Bound" => "PVC is bound to a volume and ready to use".to_string(),
             "Pending" => "PVC is pending - check storage class and available PVs".to_string(),
             "Lost" => "PVC has lost its underlying volume - data may be lost".to_string(),
-            _ => format!("PVC status: {} - investigate storage configuration", pvc_data.status),
+            _ => format!(
+                "PVC status: {} - investigate storage configuration",
+                pvc_data.status
+            ),
         };
-        
+
         Self {
             id,
             resource_type: "pvc".to_string(),
@@ -1226,7 +1271,11 @@ pub fn from_pv(pv_data: PersistentVolumeTrainingData) -> Self {
                     "Lost" => Severity::Critical,
                     _ => Severity::Warning,
                 },
-                tags: vec!["kubernetes".to_string(), "pvc".to_string(), "storage".to_string()],
+                tags: vec![
+                    "kubernetes".to_string(),
+                    "pvc".to_string(),
+                    "storage".to_string(),
+                ],
             },
             timestamp: Utc::now(),
         }
