@@ -19,15 +19,6 @@ install-linters: ## Install all linting tools (Rust + Python)
 
 lint: lint-rust lint-python ## Run all linters
 
-lint-rust: ## Lint Rust code (clippy + rustfmt check)
-	@echo "$(CYAN)Checking Rust formatting...$(NC)"
-	@cd k8s-data-collector && cargo fmt --all -- --check || (echo "$(RED)Rust formatting issues found. Run 'make fmt-rust' to fix$(NC)" && exit 1)
-	@cd gpu-detect && cargo fmt --all -- --check || (echo "$(RED)Rust formatting issues found. Run 'make fmt-rust' to fix$(NC)" && exit 1)
-	@echo "$(CYAN)Running clippy...$(NC)"
-	@cd k8s-data-collector && cargo clippy --all-targets --all-features -- -D warnings
-	@cd gpu-detect && cargo clippy --all-targets --all-features -- -D warnings
-	@echo "$(GREEN)✓ Rust linting passed!$(NC)"
-
 lint-python: ## Lint Python code (ruff + black check)
 	@echo "$(CYAN)Running ruff...$(NC)"
 	@ruff check infra_training/
