@@ -1,7 +1,6 @@
-use std::env;
-use serde_json::json;
 use log::info;
-
+use serde_json::json;
+use std::env;
 
 mod detect;
 mod system_check;
@@ -13,10 +12,10 @@ fn main() {
     if !output_json {
         env_logger::init();
     }
-    
+
     // Run GPU detection
     let gpu_info = detect::GpuDetector::detect();
-    
+
     if output_json {
         let json_output = json!({
             "gpu_type": gpu_info.gpu_type,
@@ -27,7 +26,7 @@ fn main() {
             "timestamp": chrono::Utc::now().to_rfc3339(),
             "detection_method": "rust_gpu_detector"
         });
-        
+
         println!("{}", json_output);
     } else {
         // Regular human-readable output
@@ -43,8 +42,11 @@ fn main() {
         if let Some(ref driver) = gpu_info.driver_version {
             info!("Driver: {}", driver);
         }
-        info!("ML Ready: {}", if gpu_info.is_ml_ready { "Yes" } else { "No" });
-        
+        info!(
+            "ML Ready: {}",
+            if gpu_info.is_ml_ready { "Yes" } else { "No" }
+        );
+
         // Run full readiness check if not in JSON mode
         if let Ok(rt) = tokio::runtime::Runtime::new() {
             rt.block_on(async {

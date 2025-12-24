@@ -14,7 +14,7 @@ pub fn generate_synthetic_scenarios(count: usize) -> Vec<TrainingExample> {
             severity: Severity::Critical,
             tags: vec!["oom", "memory"],
         },
-        
+
         // CrashLoopBackOff
         SyntheticTemplate {
             input: "Pod in CrashLoopBackOff state. Restart count: {restarts}. Last error: {error}",
@@ -22,7 +22,7 @@ pub fn generate_synthetic_scenarios(count: usize) -> Vec<TrainingExample> {
             severity: Severity::Critical,
             tags: vec!["crashloop", "startup"],
         },
-        
+
         // ImagePullBackOff
         SyntheticTemplate {
             input: "Pod stuck in ImagePullBackOff. Image: {image}. Error: Failed to pull image.",
@@ -30,7 +30,7 @@ pub fn generate_synthetic_scenarios(count: usize) -> Vec<TrainingExample> {
             severity: Severity::Warning,
             tags: vec!["image", "registry"],
         },
-        
+
         // High CPU usage
         SyntheticTemplate {
             input: "Node CPU usage at {cpu}%. Multiple pods throttled. Cluster autoscaling: {autoscale}",
@@ -38,7 +38,7 @@ pub fn generate_synthetic_scenarios(count: usize) -> Vec<TrainingExample> {
             severity: Severity::Warning,
             tags: vec!["cpu", "resources"],
         },
-        
+
         // Disk pressure
         SyntheticTemplate {
             input: "Node experiencing disk pressure. Available disk: {disk}GB. Condition: DiskPressure=True",
@@ -46,7 +46,7 @@ pub fn generate_synthetic_scenarios(count: usize) -> Vec<TrainingExample> {
             severity: Severity::Critical,
             tags: vec!["disk", "storage"],
         },
-        
+
         // Liveness probe failures
         SyntheticTemplate {
             input: "Pod failing liveness probe. Probe: {probe_type}. Timeout: {timeout}s. Failures: {failures}",
@@ -54,7 +54,7 @@ pub fn generate_synthetic_scenarios(count: usize) -> Vec<TrainingExample> {
             severity: Severity::Warning,
             tags: vec!["probe", "health"],
         },
-        
+
         // Pending pods
         SyntheticTemplate {
             input: "Pod stuck in Pending state. Reason: {reason}. Resource requests: CPU={cpu}, Memory={memory}",
@@ -62,7 +62,7 @@ pub fn generate_synthetic_scenarios(count: usize) -> Vec<TrainingExample> {
             severity: Severity::Warning,
             tags: vec!["scheduling", "pending"],
         },
-        
+
         // Service connectivity
         SyntheticTemplate {
             input: "Service {service} returning 503 errors. Backend pods: {healthy}/{total} healthy. Load balancer status: {lb_status}",
