@@ -37,6 +37,125 @@ os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 os.environ['HSA_OVERRIDE_GFX_VERSION'] = '11.0.0'
 
+class OutputFormatter:
+    """Clean and format terminal output"""
+    
+    @staticmethod
+    def format_command_result(command: str, result: Dict) -> str:
+        """Format command execution result cleanly"""
+        if result['success']:
+            output = result['stdout'].strip()
+            if len(output) > 2000:
+                output = output[:2000] + "\n... (output truncated)"
+            
+            # Clean format with subtle styling
+            return f"\n💻 {command}\n{output}\n"
+        else:
+            stderr = result.get('stderr', 'Unknown error').strip()
+            if len(stderr) > 500:
+                stderr = stderr[:500] + "..."
+            return f"\n❌ {command}\nError: {stderr}\n"
+    
+    @staticmethod
+    def clean_response(text: str) -> str:
+        """Clean up model response for professional output"""
+        # Remove duplicate code blocks
+        text = re.sub(r'```\s*```', '', text)
+        
+        # Remove standalone backticks or partial code blocks
+        text = re.sub(r'```\s*$', '', text)
+        text = re.sub(r'^```\s*', '', text, flags=re.MULTILINE)
+        
+        # Remove "Let's run that" type filler
+        filler_phrases = [
+            r"Let's run that\.?\s*",
+            r"Let me run that\.?\s*",
+            r"I'll execute that\.?\s*",
+            r"Running that now\.?\s*",
+        ]
+        for pattern in filler_phrases:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+        
+        # Remove duplicate command echoes (when model repeats the command)
+        text = re.sub(r'```bash\s*\$?\s*\w+[^\n]*\n```\s*(?=💻)', '', text)
+        
+        # Clean up excessive newlines
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        
+        # Remove empty code blocks
+        text = re.sub(r'```[a-z]*\s*```', '', text)
+        
+        return text.strip()
+    
+    @staticmethod
+    def format_assistant_response(text: str) -> str:
+        """Format assistant response with nice visual structure"""
+        lines = text.split('\n')
+        formatted_lines = []
+        in_code_block = False
+        
+        for line in lines:
+            # Track code blocks
+            if line.strip().startswith('```'):
+                in_code_block = not in_code_block
+                continue
+            
+            # Skip if we're in a code block (already formatted by command output)
+            if in_code_block:
+                continue
+            
+            # Add subtle formatting for better readability
+            if line.strip():
+                formatted_lines.append(line)
+        
+        return '\n'.join(formatted_lines)
+
+
+# Add this method to your ModelInteractor class
+def _process_commands(self, text: str) -> str:
+    """Process any embedded commands in the text"""
+    if not self.enable_commands:
+        return text
+    
+    formatter = OutputFormatter()
+    
+    # Look for [EXEC:...] patterns
+    exec_pattern = r'\[EXEC:\s*([^\]]+?)\]'
+    commands_found = re.findall(exec_pattern, text)
+    
+    # Remove duplicates while preserving order
+    unique_commands = []
+    seen = set()
+    for cmd in commands_found:
+        cmd_clean = cmd.strip()
+        if cmd_clean not in seen:
+            unique_commands.append(cmd_clean)
+            seen.add(cmd_clean)
+    
+    # Execute each unique command
+    results = {}
+    for command in unique_commands:
+        # Ask for permission
+        if not self._ask_permission(command):
+            results[command] = f"\n⚠️  Command declined: {command}\n"
+            continue
+        
+        # Execute
+        result = self.command_executor.execute(command)
+        results[command] = formatter.format_command_result(command, result)
+    
+    # Replace all [EXEC:...] with results
+    def replace_exec(match):
+        cmd = match.group(1).strip()
+        return results.get(cmd, '')
+    
+    text = re.sub(exec_pattern, replace_exec, text)
+    
+    # Clean up the response
+    text = formatter.clean_response(text)
+    
+    return text
+
 class CommandExecutor:
     """Safely executes shell commands with allowlist"""
     
