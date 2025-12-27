@@ -506,7 +506,7 @@ class ModelInteractor:
         
         return text
     
-    def _get_generation_config(self, max_tokens: int = 300) -> Dict:
+    def _get_generation_config(self, max_tokens: int = 800) -> Dict:
         """Get generation config based on hardware"""
         config = {
             "max_new_tokens": max_tokens,
