@@ -253,20 +253,40 @@ class ModelInteractor:
         context_parts.append(f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         context_parts.append(f"Working directory: {os.getcwd()}")
         
-        # Available tools with better instructions
+        # Available tools
         if self.enable_commands:
-            tool_info.append("TOOL: Execute commands with [EXEC:command] (use ONCE per command)")
-            tool_info.append(f"Available: {', '.join(self.command_executor.allowed_commands[:8])}")
+            tool_info.append("You can execute commands by writing [EXEC:command] in your response")
+            tool_info.append(f"Available commands: {', '.join(self.command_executor.allowed_commands[:10])}")
         
         if self.enable_files:
-            tool_info.append("TOOL: Read files with [READ:filepath]")
-            tool_info.append("TOOL: List files with [LIST:dir pattern]")
+            tool_info.append("You can read files by writing [READ:filepath] in your response")
+            tool_info.append("You can list files by writing [LIST:directory pattern] in your response")
         
         system_context = "\n".join(context_parts)
         tools_context = "\n".join(tool_info) if tool_info else ""
         
-        # More direct prompt format with examples
-        enhanced_prompt = f"""You are an SRE assistant. You can propose commands to run.
+        # Better prompt that encourages conversation AND tool use
+        enhanced_prompt = f"""You are an experienced SRE assistant helping with Kubernetes and infrastructure tasks.
+
+    Context:
+    {system_context}
+
+    Available Tools:
+    {tools_context}
+
+    Instructions:
+    - When you need information, propose commands using [EXEC:command]
+    - After seeing command output, provide thoughtful analysis
+    - Explain what the data means and suggest next steps
+    - Be conversational and helpful, not just terse
+    - If you see patterns or issues in output, point them out
+    - Offer recommendations based on what you observe
+
+    User question: {user_prompt}
+
+    Your response:"""
+        
+        return enhanced_prompt, system_context
 
 {tools_context}
 
