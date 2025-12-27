@@ -246,62 +246,38 @@ class ModelInteractor:
     
     def _inject_context(self, user_prompt: str) -> Tuple[str, str]:
         """Inject system context and available tools into prompt"""
-        context_parts = []
-        tool_info = []
+        # Build system context
+        system_context = f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\nWorking directory: {os.getcwd()}"
         
-        # System context
-        context_parts.append(f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        context_parts.append(f"Working directory: {os.getcwd()}")
-        
-        # Available tools
+        # Build tools description
+        tools = []
         if self.enable_commands:
-            tool_info.append("You can execute commands by writing [EXEC:command] in your response")
-            tool_info.append(f"Available commands: {', '.join(self.command_executor.allowed_commands[:10])}")
-        
+            available = ', '.join(self.command_executor.allowed_commands[:10])
+            tools.append(f"- Execute commands: [EXEC:command] (available: {available})")
         if self.enable_files:
-            tool_info.append("You can read files by writing [READ:filepath] in your response")
-            tool_info.append("You can list files by writing [LIST:directory pattern] in your response")
+            tools.append("- Read files: [READ:filepath]")
+            tools.append("- List files: [LIST:directory pattern]")
         
-        system_context = "\n".join(context_parts)
-        tools_context = "\n".join(tool_info) if tool_info else ""
+        tools_context = "\n".join(tools) if tools else "No tools available"
         
-        # Better prompt that encourages conversation AND tool use
-        enhanced_prompt = f"""You are an experienced SRE assistant helping with Kubernetes and infrastructure tasks.
+        # Create focused prompt
+        enhanced_prompt = f"""You are an experienced SRE assistant helping with Kubernetes and infrastructure.
 
-    Context:
-    {system_context}
+    CONTEXT: {system_context}
 
-    Available Tools:
+    TOOLS:
     {tools_context}
 
-    Instructions:
-    - When you need information, propose commands using [EXEC:command]
-    - After seeing command output, provide thoughtful analysis
-    - Explain what the data means and suggest next steps
-    - Be conversational and helpful, not just terse
-    - If you see patterns or issues in output, point them out
-    - Offer recommendations based on what you observe
+    INSTRUCTIONS:
+    - Use [EXEC:command] when you need data (you'll be asked for permission)
+    - After seeing command output, analyze what it means
+    - Explain patterns, issues, and suggest next steps
+    - Be conversational and helpful
+    - Base analysis ONLY on actual output shown, never make up examples
 
-    User question: {user_prompt}
+    USER: {user_prompt}
 
-    Your response:"""
-        
-        return enhanced_prompt, system_context
-
-{tools_context}
-
-Context: {system_context}
-
-User asks: {user_prompt}
-
-To propose a command, write: [EXEC:command]
-Example: [EXEC:kubectl get nodes]
-
-You will be asked for permission before the command runs.
-After seeing the output, analyze ONLY the actual data shown (don't make up examples).
-Be brief (2-3 sentences).
-
-Your response:"""
+    ASSISTANT:"""
         
         return enhanced_prompt, system_context
     
