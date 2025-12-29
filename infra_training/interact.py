@@ -793,10 +793,13 @@ class ModelInteractor:
                         continue
                 
                 # Generate response
-                print("kubepilot: ", end="", flush=True)
+                print("\n🤖 kubepilot:", end=" ", flush=True)
                 response = self.generate_response(user_input, max_tokens, use_history)
-                print(response)
-                print()
+
+                # Format and display cleanly
+                formatted_response = OutputFormatter.format_assistant_response(response)
+                print(formatted_response)
+                print()  # Extra line for readability
                 
             except KeyboardInterrupt:
                 self._print_session_summary()
