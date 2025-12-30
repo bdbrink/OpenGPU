@@ -156,6 +156,14 @@ def _process_commands(self, text: str) -> str:
     
     return text
 
+def _extract_action(self, text: str) -> Optional[str]:
+    import re
+    match = re.search(r'\[ACTION:\s*(\w+)\]', text)
+    if match:
+        return match.group(1).upper()
+    return None
+
+
 class CommandExecutor:
     """Safely executes shell commands with allowlist"""
     
