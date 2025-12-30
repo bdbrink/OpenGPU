@@ -570,6 +570,8 @@ class ModelInteractor:
         
         # Generate with stricter settings
         gen_config = self._get_generation_config(max_tokens)
+
+        action = self._extract_action(response)
         
         try:
             import time
