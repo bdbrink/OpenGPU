@@ -1,0 +1,15 @@
+{
+  "cluster_baseline": {},
+  "known_issues": [
+    {
+      "issue": "Pending pods detected",
+      "severity": "medium",
+      "context": "give me a cluster overview bestie",
+      "timestamp": "2026-01-04T20:15:12.602856",
+      "resolved": false
+    }
+  ],
+  "resolutions": [],
+  "patterns": [],
+  "last_health_check": null
+}

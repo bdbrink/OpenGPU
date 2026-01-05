@@ -375,6 +375,14 @@ ASSISTANT:"""
         text = re.sub(exec_pattern, replace, text)
         return OutputFormatter.clean_response(text)
     
+    def _clean_response(self, text: str) -> str:
+        """Strip verbose explanations, keep only commands and brief results"""
+        # Remove long code blocks that aren't EXEC
+        text = re.sub(r'```(?:bash|shell)\n(?!\[EXEC:).*?```', '', text, flags=re.DOTALL)
+        # Remove multi-line explanations before commands
+        text = re.sub(r'(###.*?\n|Firstly,.*?\n|Next up,.*?\n)', '', text)
+        return text
+    
     def _extract_insights(self, response: str, user_input: str):
         """Extract and learn from interactions"""
         
